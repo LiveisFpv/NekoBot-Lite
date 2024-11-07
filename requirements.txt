@@ -1,0 +1,10 @@
+requests
+discord
+asyncio
+asyncpraw
+discord-components
+googletrans==3.1.0a0
+requests.api
+youtube-dl
+PyNaCl
+ffmpeg
