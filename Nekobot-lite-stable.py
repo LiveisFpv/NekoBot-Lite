@@ -33,7 +33,6 @@ bot = commands.Bot(command_prefix = settings['prefix'],intents=intents,help_comm
 
 check=False
 starttime=time.time()
-
 async def log(str):
     print(str)
 
@@ -54,48 +53,22 @@ async def trans(ctx=Context): # Создаём функцию и передаё�
 
 @bot.command()# Не передаём аргумент pass_context, так как он был нужен в старых версиях.
 async def version(ctx=Context): # Создаём функцию и передаём аргумент ctx.
-    embed=discord.Embed(title="NEKO bot lite Версия 1.5 Бета:", description=f"**Обновления:**Добавлены новые более быстрые кнопки\nОбновлна версия Python до 3.12.4 и библиотека discord\n**Пофиксены некоторые баги\nДобавлена мини игра**\nПоследнее обновлние:15.08.2024", color=0x0033ff)
-    r = requests.get("https://api.waifu.pics/sfw/"+"neko")
-    imageurl=r.json()["url"]
-    embed.set_image(url=imageurl)
+    embed=discord.Embed(title="NEKO bot lite Версия 1.5 Бета:", description=open("update.md",encoding='utf-8').read(), color=0x0033ff)
+    # r = requests.get("https://api.waifu.pics/sfw/"+"neko")
+    # imageurl=r.json()["url"]
+    # # embed.set_image(url=imageurl)
     await ctx.send(embed=embed)
 
 @bot.command()# Не передаём аргумент pass_context, так как он был нужен в старых версиях.
 async def help(ctx=Context): # Создаём функцию и передаём аргумент ctx.
-    embed=discord.Embed(title="NEKO bot lite commands:", description=f"""**%version**-Версия бота и описание последнего обновления
-        **%pikachu**- Отправляет рандомного пикачу
-        **%Reddit 'Название группы'**-Отправляет рандомный пост из этой группы
-        **%anime**-Выводит рандомную аниме цитату
-        **%meme**- Рандомный популярный мем
-        **%potato**- КАРТОШКА
-        **%genshin**-Все для геншинфагов
-        **%animeme**-Анимешные мемы тоже в чате
-        **%trans**- Для свободного взаимодействия
-        **%loli-Используйте эту команду только в том случае, если хотите сесть в тюрьму на 8 лет, но 8 лет – не срок…**
-        В полной версии автоматически переводит мемы
-        В этой присутствуют мини игры
-        **%FBI-FBI OPEN UP**
-        **%c**-Найти аниме с этим персонажем
-        **%waifu**-print **'%waifu help'** Чтобы увидеть список доступных для этой команд
-        **%neko-NEKOCHAN!!!!!** Неко неко неко
-        *%support*
-        *Created by LiveisFPV*""", color=0x0033ff)
+    
+    embed=discord.Embed(title="NEKO bot lite commands:", description=open("help.md",encoding="utf-8").read(), color=0x0033ff)
     embed.set_author(name="NEKO", icon_url=bot.user.avatar.url)
-    r = requests.get("https://api.waifu.pics/sfw/"+"neko")
-    imageurl=r.json()["url"]
-    embed.set_image(url=imageurl)
+    # r = requests.get("https://api.waifu.pics/sfw/"+"neko")
+    # imageurl=r.json()["url"]
+    # embed.set_image(url=imageurl)
     await ctx.send(embed=embed)
-    embed=discord.Embed(title="MUSIC commands:", description=f"""**%play**-Воспроизвети/добавить трек/плейлист или найти песню
-        **%pause**-Поставить на паузу
-        **%resume**-Продолжить
-        **%skip**-Пропустить трек
-        **Кнопки:
-        Back
-        Play/pause
-        Skip
-        Loop queue
-        Stop and leave
-        Loop track**""",color=0x0033ff)
+    embed=discord.Embed(title="MUSIC commands:", description=open("play_help.md",encoding="utf-8").read(),color=0x0033ff)
     embed.set_author(name="NEKO", icon_url=bot.user.avatar.url)
     embed.set_image(url="https://images.pexels.com/photos/3104/black-and-white-music-headphones-life.jpg?auto=compress&cs=tinysrgb&dpr=2&h=750&w=1260")
     await ctx.send(embed=embed)
@@ -983,41 +956,14 @@ async def on_member_join(member):
     embed=discord.Embed(title="Welcome to the club buddy!", description=f"К нам в {member.guild.name} приехал {member.mention}!", color=0xCC974F) #Embed
     embed.set_image(url = "https://c.tenor.com/i27B-Xj0CSQAAAAd/welcome-to-the-club-buddy-butt-slap.gif")
     await member.send(embed=embed) #Отправка сообщения
-    embed=discord.Embed(title="NEKO bot lite commands:", description=f"""**%version**-Версия бота и описание последнего обновления
-        **%pikachu**- Отправляет рандомного пикачу
-        **%Reddit 'Название группы'**-Отправляет рандомный пост из этой группы
-        **%anime**-Выводит рандомную аниме цитату
-        **%meme**- Рандомный популярный мем
-        **%potato**- КАРТОШКА
-        **%genshin**-Все для геншинфагов
-        **%animeme**-Анимешные мемы тоже в чате
-        **%trans**- Для свободного взаимодействия
-        **%loli-Используйте эту команду только в том случае, если хотите сесть в тюрьму на 8 лет, но 8 лет – не срок…**
-        В полной версии автоматически переводит мемы
-        В этой присутствуют мини игры
-        **%FBI-FBI OPEN UP**
-        **%c**-Найти аниме с этим персонажем
-        **%waifu**-print **'%waifu help'** Чтобы увидеть список доступных для этой команд
-        **%neko-NEKOCHAN!!!!!** Неко неко неко
-        *%support*
-        *Created by LiveisFPV*""", color=0x0033ff)
+    embed=discord.Embed(title="NEKO bot lite commands:", description=open("help.md",encoding="utf-8").read(), color=0x0033ff)
     embed.set_author(name="NEKO", icon_url=bot.user.avatar.url)
-    r = requests.get("https://api.waifu.pics/sfw/"+"neko")
-    #print(r.json())
-    imageurl=r.json()["url"]
-    embed.set_image(url=imageurl)
+    # r = requests.get("https://api.waifu.pics/sfw/"+"neko")
+    # #print(r.json())
+    # imageurl=r.json()["url"]
+    # embed.set_image(url=imageurl)
     await member.send(embed=embed)
-    embed=discord.Embed(title="MUSIC commands:", description=f"""**%play**-Воспроизвести/добавить трек/плейлист или найти песню
-        **%pause**-Поставить на паузу
-        **%resume**-Продолжить
-        **%skip**-Пропустить трек
-        **Кнопки:
-        Back
-        Play/pause
-        Skip
-        Loop queue
-        Stop and leave
-        Loop track**""",color=0x0033ff)
+    embed=discord.Embed(title="MUSIC commands:", description=open("play_help.md",encoding="utf-8").read(),color=0x0033ff)
     embed.set_image(url="https://images.pexels.com/photos/3104/black-and-white-music-headphones-life.jpg?auto=compress&cs=tinysrgb&dpr=2&h=750&w=1260")
     embed.set_author(name="NEKO", icon_url=bot.user.avatar.url)
     await member.send(embed=embed)
