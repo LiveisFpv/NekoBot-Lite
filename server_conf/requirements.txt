@@ -5,6 +5,6 @@ asyncpraw
 discord-components
 googletrans==3.1.0a0
 requests.api
-youtube-dl
+-U --pre "yt-dlp[default]"
 PyNaCl
 ffmpeg

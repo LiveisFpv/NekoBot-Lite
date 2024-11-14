@@ -1,12 +1,12 @@
 from discord.ext import commands
-import json
+from Config.config import settings_bot
 import os
 import discord
 import asyncio
 
-settings = json.load(open("./Bot/Config/bot.json","r"))
+
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix = settings['prefix'],intents=intents,help_command=None)
+bot = commands.Bot(command_prefix = settings_bot['prefix'],intents=intents,help_command=None)
 async def load_extensions():
     for filename in os.listdir('./Bot/Commands'):
         if filename.endswith('.py'):
@@ -16,4 +16,4 @@ async def main():
     
 
 asyncio.run(main())
-bot.run(settings['token'])
+bot.run(settings_bot['token'])
