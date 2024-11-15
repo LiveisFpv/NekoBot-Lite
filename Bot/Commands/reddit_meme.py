@@ -24,8 +24,7 @@ class RedditMemeCommands(commands.Cog):
             if ".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url:
                 break
             submission=random.choice(memes_all)
-        title = submission.title
-        embed = discord.Embed(title=submission.title +"\n"+title.text)
+        embed = discord.Embed(title=submission.title)
         embed.set_image(url=submission.url)
         await ctx.send(embed=embed)
 
@@ -44,8 +43,7 @@ class RedditMemeCommands(commands.Cog):
             if ".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url:
                 break
             submission=random.choice(memes_all)
-        title = submission.title
-        embed = discord.Embed(title=submission.title +"\n"+title.text)
+        embed = discord.Embed(title=submission.title)
         embed.set_image(url=submission.url)
         await ctx.send(embed=embed)
         if random.randint(0,1)==1:
@@ -77,8 +75,7 @@ class RedditMemeCommands(commands.Cog):
             if ".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url:
                 break
             submission=random.choice(memes_all)
-        title = submission.title
-        embed = discord.Embed(title=submission.title +"\n"+title.text)
+        embed = discord.Embed(title=submission.title)
         embed.set_image(url=submission.url)
         await ctx.send(embed=embed)
 
@@ -120,19 +117,12 @@ class RedditMemeCommands(commands.Cog):
                 await ctx.send("Subreddit:"+name+" Не найден")
                 return
             else:
-                title = submission.title
-                if len(str(title.text)+str(submission.title))<256:
-                    embed = discord.Embed(title=submission.title +"\n"+title.text)
-                else:
-                    embed = discord.Embed(title=submission.title)
+                embed = discord.Embed(title=submission.title)
                 if pov<250*chose.count('+') and(".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url):
                     embed.set_image(url=submission.url)
                     await ctx.send(embed=embed)
                 else:
-                    if len(str(title.text)+str(submission.title))<256:
-                        embed = discord.Embed(title=submission.title +"\n"+title.text,color=0xe74c3c)
-                    else:
-                        embed = discord.Embed(title=submission.title,color=0xe74c3c)
+                    embed = discord.Embed(title=submission.title,color=0xe74c3c)
                     await ctx.send(embed=embed)
                     await ctx.send(submission.url)
 
@@ -151,8 +141,7 @@ class RedditMemeCommands(commands.Cog):
             if ".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url:
                 break
             submission=random.choice(memes_all)
-        title = submission.title
-        embed = discord.Embed(title=submission.title +"\n"+title.text)
+        embed = discord.Embed(title=submission.title)
         embed.set_image(url=submission.url)
         await ctx.send(embed=embed)
 
@@ -171,8 +160,7 @@ class RedditMemeCommands(commands.Cog):
             if ".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url:
                 break
             submission=random.choice(memes_all)
-        title = submission.title
-        embed = discord.Embed(title=submission.title +"\n"+title.text)
+        embed = discord.Embed(title=submission.title)
         embed.set_image(url=submission.url)
         await ctx.send(embed=embed)
 

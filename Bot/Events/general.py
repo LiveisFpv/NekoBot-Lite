@@ -29,9 +29,6 @@ class EventHandler(commands.Cog):
         embed.set_author(name="NEKO", icon_url=self.bot.user.avatar.url)
         await member.send(embed=embed)
 
-    @commands.Cog.listener()
-    async def on_message(self,message):
-        await self.bot.process_commands(message)
 
 async def setup(bot):
     await bot.add_cog(EventHandler(bot))

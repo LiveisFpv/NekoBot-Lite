@@ -11,6 +11,9 @@ async def load_extensions():
     for filename in os.listdir('./Bot/Commands'):
         if filename.endswith('.py'):
             await bot.load_extension(f'Commands.{filename[:-3]}')
+    for filename in os.listdir('./Bot/Events'):
+        if filename.endswith('.py'):
+            await bot.load_extension(f'Events.{filename[:-3]}')
 async def main():
     await load_extensions()
     
