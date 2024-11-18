@@ -28,6 +28,9 @@ jobs:
                   python -m pip install --upgrade pip
                   pip install -r server_conf/requirements.txt
                   pip install flake8
+                  pip install pytest-asyncio
+                  pip install pytest
+                  pip install pytest-mock
             # Потом
             # - name: linting
             #   run: |
@@ -35,4 +38,4 @@ jobs:
 
             - name: run tests
               run: |
-                  pytest
+                  pytest Bot/tests/

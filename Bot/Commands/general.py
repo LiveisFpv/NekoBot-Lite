@@ -12,7 +12,8 @@ class GeneralCommands(commands.Cog):
     
     @commands.command(name='ping', help='Check if the bot is online')
     async def ping(self, ctx: Context):
-        await ctx.send(f'Pong! {round(self.bot.latency * 1000)}ms')
+        latency = self.bot.latency
+        await ctx.send(f'Pong! {latency}s')
     
     @commands.command(name='version', help='Check bot version')
     async def version(self,ctx=Context): 

@@ -8,5 +8,3 @@ requests.api
 yt-dlp
 PyNaCl
 ffmpeg
-pytest
-pytest-mock

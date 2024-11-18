@@ -14,9 +14,7 @@ async def load_extensions():
     for filename in os.listdir('./Bot/Events'):
         if filename.endswith('.py'):
             await bot.load_extension(f'Events.{filename[:-3]}')
-async def main():
-    await load_extensions()
     
 
-asyncio.run(main())
+bot.setup_hook=load_extensions
 bot.run(settings_bot['token'])
