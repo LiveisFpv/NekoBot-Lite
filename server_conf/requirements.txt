@@ -8,3 +8,4 @@ requests.api
 yt-dlp
 PyNaCl
 ffmpeg
+pillow
