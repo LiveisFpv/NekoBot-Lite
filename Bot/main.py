@@ -2,7 +2,6 @@ from discord.ext import commands
 from Config.config import settings_bot
 import os
 import discord
-import asyncio
 
 
 intents = discord.Intents.all()
@@ -16,5 +15,6 @@ async def load_extensions():
             await bot.load_extension(f'Events.{filename[:-3]}')
     
 
-bot.setup_hook=load_extensions
-bot.run(settings_bot['token'])
+if __name__ == "__main__":
+    bot.setup_hook=load_extensions
+    bot.run(settings_bot['token'])
