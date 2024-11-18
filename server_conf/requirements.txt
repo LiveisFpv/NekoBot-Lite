@@ -5,6 +5,8 @@ asyncpraw
 discord-components
 googletrans==3.1.0a0
 requests.api
--U --pre "yt-dlp[default]"
+yt-dlp
 PyNaCl
 ffmpeg
+pytest
+pytest-mock
