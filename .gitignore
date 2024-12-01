@@ -1,3 +1,4 @@
 bot.json
 reddit.json
 __pycache__
+.pytest_cache
