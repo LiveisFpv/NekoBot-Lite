@@ -18,7 +18,7 @@ class playerView(View):
         
     @discord.ui.button(style = ButtonStyle.grey,emoji = '⏯',custom_id = "pla",row=0)
     async def button_callback2(self,interaction: discord.Interaction,button:Button):
-        self.responce="pla"
+        self.responce="play"
         self.message_id=interaction.message.id
         await interaction.response.defer()
         
