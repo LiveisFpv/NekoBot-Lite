@@ -5,62 +5,87 @@ import asyncio
 import traceback
 from Music_player.music_player import playerView
 from yt_dlp import YoutubeDL
-import yt_dlp
 from Utils.utils import log
 
 class MediaPlayer:
     def __init__(self):
         self.queue = asyncio.Queue()
+        self.queue_next=asyncio.Queue()
         self.history = asyncio.LifoQueue()
+        self.history_next=asyncio.LifoQueue()
         self.loop = False
         self.loop_playlist = False
 
     async def add_to_queue(self, url):
+        if not self.queue.empty():
+            await self.queue_next.put(url)
         await self.queue.put(url)
         await log(f"INFO: Added to queue: {url}")
 
     async def get_next_song(self):
+        next_song=None
         if self.loop:
-            return await self.history.get()
+            song= await self.history.get()
+            if not self.history_next.empty():
+                next_song=await self.history_next.get()
+                await self.history_next.put(next_song)
+            await self.history.put(song)
+            return song, next_song
         elif not self.queue.empty():
             song = await self.queue.get()
+            if not self.queue_next.empty():
+                next_song=await self.queue_next.get()
+                await self.history_next.put(next_song)
             await self.history.put(song)
-            return song
-        return None
+            return song,next_song
+        return None,None
     async def delete_all_tracks(self):
         while not self.queue.empty():
             await self.queue.get()
         while not self.history.empty():
             await self.history.get()
-
+        while not self.queue_next.empty():
+            await self.queue_next.get()
+        while not self.history_next.empty():
+            await self.history_next.get()
+    async def get_previous_song(self):
+        if not self.history.empty():
+            song = await self.history.get()
+            await self.queue.put(song)
+            return song
+        return None
 class MediaCommands(commands.Cog):
     ydl_opts = {
         'format': 'bestaudio/best',
         'ignoreerrors': True,
+        'user-agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '128',
         }],
     }
-    def __init__(self, bot):
-        self.bot = bot
-        self.players = {}
-    # Выносим блокирующий вызов в отдельный поток
-    def fetch_track(self, url):
-        with YoutubeDL(self.ydl_opts) as ydl:
-            return ydl.extract_info(url, download=False)
-    async def download_video(self,player, video_url):
-        await player.add_to_queue(video_url)
-    # Выносим блокирующий вызов в отдельный поток
-    def fetch_playlist(self,playlist_url):
-        ydl_opts = {
+    ydl_opts_meta = {
             'geo_bypass': True,
             'quiet': True,
             'nocheckcertificate': True,
             'ignoreerrors': True,
             'extract_flat': True,
+            'user-agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
         }
+    FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
+    def __init__(self, bot):
+        self.bot = bot
+        self.players = {}
+    # Выносим блокирующий вызов в отдельный поток
+    def fetch_track(self, url,ydl_opts=ydl_opts):
+        with YoutubeDL(ydl_opts) as ydl:
+            return ydl.extract_info(url, download=False)
+    async def download_video(self,player, video_url):
+        await player.add_to_queue(video_url)
+    # Выносим блокирующий вызов в отдельный поток
+    def fetch_playlist(self,playlist_url):
+        ydl_opts=self.ydl_opts_meta
         with YoutubeDL(ydl_opts) as ydl:
             return ydl.extract_info(playlist_url, download=False)
     async def download_playlist(self,player,playlist_url):
@@ -123,23 +148,31 @@ class MediaCommands(commands.Cog):
         elif view.responce=="stop":
             await player.delete_all_tracks()
             await self.skip(ctx)
+        elif view.responce=="back":
+            print("back")
+
     async def start_playback(self, ctx, voice_client, player=MediaPlayer):
         view=playerView(timeout=36000)
         msg= await ctx.send(embed=discord.Embed(title = '**Проигрывание сейчас начнется**'),view=view)
         while not player.queue.empty() or player.loop:
-            song = await player.get_next_song()
+            song,next_song = await player.get_next_song() 
             if not song:
                 break
             try:
                 
                 info=await asyncio.to_thread(self.fetch_track, song)
+                if next_song !=None:
+                    info_next=await asyncio.to_thread(self.fetch_track,next_song)
+                else:
+                    info_next="end of playlist"
                 #Пропускаем недоступные треки
                 if info==None:
                     continue
                 url = info['url']
-                FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
-                voice_client.play(discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS))
-                embed = discord.Embed(title = '**Сейчас играет** - ' + info.get('title'),description="**Следующая песня:"+"name"+"     Песен в списке: "+str(player.queue.qsize())+"**",color=0x0033ff)
+                info_next=info_next['title']
+                
+                voice_client.play(discord.FFmpegPCMAudio(url, **self.FFMPEG_OPTIONS))
+                embed = discord.Embed(title = '**Сейчас играет** - ' + info.get('title'),description="**Следующая песня:"+info_next+"     Песен в списке: "+str(player.queue.qsize())+"**",color=0x0033ff)
                 await msg.edit(embed=embed,view=view)
                 
                 while voice_client.is_playing() or voice_client.is_paused():
@@ -147,7 +180,6 @@ class MediaCommands(commands.Cog):
                     if view.responce!="":
                         await self.responce(ctx,player,view,voice_client)
                         await msg.edit(view=view)
-                        print(view.responce)
                         view.responce=""
                     
                     await asyncio.sleep(1)

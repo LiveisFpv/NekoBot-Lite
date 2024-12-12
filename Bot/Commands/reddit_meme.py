@@ -79,7 +79,7 @@ class RedditMemeCommands(commands.Cog):
         embed.set_image(url=submission.url)
         await ctx.send(embed=embed)
 
-    @commands.command(naem="Reddit")
+    @commands.command(name="Reddit")
     async def Reddit(self,ctx=Context,name=str()):
         reddit=await get_reddit_instance()
         mas18=['hentai','bondage','nsfw','xxx','18+','porn','fuck','shit']
