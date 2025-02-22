@@ -31,8 +31,8 @@ RUN apt-get update && apt-get install -y \
 
 # Устанавливаем Python-зависимости
 RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=server_conf/requirements.txt,target=requirements.txt \
-    python -m pip install -r requirements.txt
+    --mount=type=bind,source=server_conf/requirements.txt,target=server_conf/requirements.txt \
+    python -m pip install -r server_conf/requirements.txt
 
 # Настраиваем окружение для yt-dlp
 ENV HOME=/home/appuser
@@ -47,4 +47,4 @@ EXPOSE 4545
 WORKDIR /app
 
 # Запускаем приложение
-CMD ["python", "./Bot/main.py"]
+CMD ["python", "Bot/main.py"]

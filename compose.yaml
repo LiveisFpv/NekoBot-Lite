@@ -11,6 +11,7 @@ services:
   server:
     build:
       context: .
+      dockerfile: Dockerfile
     ports:
       - 4545:4545
 
