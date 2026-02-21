@@ -1,4 +1,4 @@
-name: Python CI
+name: Python CI/CD
 
 on:
     push:
@@ -6,36 +6,58 @@ on:
             - main
 
 jobs:
-    test:
-        runs-on: ubuntu-latest
-        steps:
-            - name: Check out the code
-              uses: actions/checkout@v3
-            
-            - name: Set up Python
-              uses: actions/setup-python@v4
-              with:
-                  python-version: '3.12'
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
 
-            - name: Install FFmpeg
-              run: sudo apt-get update && sudo apt-get install -y ffmpeg
-            
-            - name: Install dependencies for Kerberos
-              run: sudo apt-get update && sudo apt-get install -y libkrb5-dev
-            
-            - name: Install dependencies
-              run: |
-                  python -m pip install --upgrade pip
-                  pip install -r server_conf/requirements.txt
-                  pip install flake8
-                  pip install pytest-asyncio
-                  pip install pytest
-                  pip install pytest-mock
-            # Потом
-            # - name: linting
-            #   run: |
-            #       flake8 .
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      
+      - name: Install dependencies for Kerberos
+        run: sudo apt-get update && sudo apt-get install -y libkrb5-dev
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r server_conf/requirements.txt
+          pip install flake8
+          pip install pytest-asyncio
+          pip install pytest
+          pip install pytest-mock
+      # Потом
+      # - name: linting
+      #   run: |
+      #       flake8 .
 
-            - name: run tests
-              run: |
-                  pytest Bot/tests/
+      - name: run tests
+        run: |
+          pytest Bot/tests/
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+      
+      - name: Deploy to VPS
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+            cd ~/NekoBot-Lite
+            git pull origin main
+            docker compose build
+            docker compose down
+            docker compose up -d
+          EOF
