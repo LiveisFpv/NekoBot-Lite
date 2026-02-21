@@ -13,6 +13,7 @@ services:
       - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
       - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
       - REDDIT_USER_AGENT=${REDDIT_USER_AGENT}
+      - YTDLP_REMOTE_COMPONENTS=${YTDLP_REMOTE_COMPONENTS:-ejs:github}
 #     depends_on:
 #       db:
 #         condition: service_healthy

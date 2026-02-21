@@ -28,11 +28,13 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
     unzip \
+    ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем Deno (последнюю стабильную версию)
-RUN curl -fsSL https://deno.land/install.sh | sh
+RUN curl -fsSL https://deno.land/install.sh | sh \
+    && /root/.deno/bin/deno --version
 
 # Добавляем Deno в PATH для всех пользователей
 ENV DENO_INSTALL="/root/.deno"
@@ -46,17 +48,19 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Настраиваем окружение для yt-dlp
 ENV HOME=/home/appuser
 ENV YTDLP_CACHE_DIR=/home/appuser/.cache/yt-dlp
+ENV YTDLP_REMOTE_COMPONENTS=ejs:github
 
 # Копируем Deno в домашнюю директорию пользователя, чтобы он был доступен после переключения
-RUN mkdir -p /home/appuser/.deno && \
+RUN mkdir -p /home/appuser/.deno /home/appuser/.cache/deno && \
     cp -r /root/.deno/* /home/appuser/.deno/ && \
-    chown -R appuser:appuser /home/appuser/.deno
+    chown -R appuser:appuser /home/appuser/.deno /home/appuser/.cache/deno
 
 # Переключаемся на пользователя
 USER appuser
 
 # Добавляем Deno в PATH для пользователя
 ENV DENO_INSTALL="/home/appuser/.deno"
+ENV DENO_DIR="/home/appuser/.cache/deno"
 ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 
 # Порт, используемый приложением

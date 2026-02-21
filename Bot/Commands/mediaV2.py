@@ -2,6 +2,7 @@ import discord
 from discord.ext.commands import Context
 from discord.ext import commands
 import asyncio
+import os
 import traceback
 from Music_player.music_player import playerView
 from yt_dlp import YoutubeDL
@@ -55,9 +56,19 @@ class MediaPlayer:
             return song
         return None
 class MediaCommands(commands.Cog):
+    YTDLP_REMOTE_COMPONENTS = [
+        component.strip()
+        for component in os.getenv("YTDLP_REMOTE_COMPONENTS", "ejs:github").split(",")
+        if component.strip()
+    ]
+    YTDLP_JS_RUNTIMES = {"deno": {}}
+
     ydl_opts = {
         'format': 'bestaudio/best',
         'ignoreerrors': True,
+        'cachedir': os.getenv("YTDLP_CACHE_DIR", "/home/appuser/.cache/yt-dlp"),
+        'remote_components': YTDLP_REMOTE_COMPONENTS,
+        'js_runtimes': YTDLP_JS_RUNTIMES,
         'user-agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -71,6 +82,9 @@ class MediaCommands(commands.Cog):
             'nocheckcertificate': True,
             'ignoreerrors': True,
             'extract_flat': True,
+            'cachedir': os.getenv("YTDLP_CACHE_DIR", "/home/appuser/.cache/yt-dlp"),
+            'remote_components': YTDLP_REMOTE_COMPONENTS,
+            'js_runtimes': YTDLP_JS_RUNTIMES,
             'user-agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
         }
     FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
