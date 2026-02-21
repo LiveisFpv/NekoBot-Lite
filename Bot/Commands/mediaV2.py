@@ -169,39 +169,41 @@ class MediaCommands(commands.Cog):
         view=playerView(timeout=36000)
         msg= await ctx.send(embed=discord.Embed(title = '**Проигрывание сейчас начнется**'),view=view)
         while not player.queue.empty() or player.loop:
-            song,next_song = await player.get_next_song() 
+            song,next_song = await player.get_next_song()
             if not song:
                 break
             try:
-                
-                info=await asyncio.to_thread(self.fetch_track, song)
-                if next_song !=None:
-                    info_next=await asyncio.to_thread(self.fetch_track,next_song)
-                else:
-                    info_next="end of playlist"
-                #Пропускаем недоступные треки
-                if info==None:
+                info = await asyncio.to_thread(self.fetch_track, song)
+                if info is None:
                     continue
-                url = info['url']
-                info_next=info_next['title']
-                
+
+                url = info.get('url')
+                if not url:
+                    await log(f"WARNING: Missing stream URL for track: {song}")
+                    continue
+
+                if next_song is not None:
+                    info_next = await asyncio.to_thread(self.fetch_track, next_song)
+                    next_title = info_next.get('title') if isinstance(info_next, dict) else "unknown"
+                else:
+                    next_title = "end of playlist"
+
                 voice_client.play(discord.FFmpegPCMAudio(url, **self.FFMPEG_OPTIONS))
-                embed = discord.Embed(title = '**Сейчас играет** - ' + info.get('title'),description="**Следующая песня:"+info_next+"     Песен в списке: "+str(player.queue.qsize())+"**",color=0x0033ff)
+                title = info.get('title', song)
+                embed = discord.Embed(title = '**Сейчас играет** - ' + title,description="**Следующая песня:"+next_title+"     Песен в списке: "+str(player.queue.qsize())+"**",color=0x0033ff)
                 await msg.edit(embed=embed,view=view)
-                
+
                 while voice_client.is_playing() or voice_client.is_paused():
-                    
+
                     if view.responce!="":
                         await self.responce(ctx,player,view,voice_client)
                         await msg.edit(view=view)
                         view.responce=""
-                    
+
                     await asyncio.sleep(1)
             except Exception as e:
                 await log(f"ERROR: {traceback.format_exc()}")
                 await ctx.send("Произошла ошибка при воспроизведении.")
-
-    #Пропуск трека
     @commands.command(name='skip',help='skip current track')
     async def skip(self,ctx=Context):
         voice_client = ctx.message.guild.voice_client
@@ -239,3 +241,4 @@ class MediaCommands(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(MediaCommands(bot))
+
