@@ -141,6 +141,11 @@ class DummyView:
         self.response = response
 
 
+class DummyMessage:
+    async def edit(self, **kwargs):
+        raise RuntimeError("edit failed")
+
+
 @pytest.mark.asyncio
 async def test_media_playback_service_download_playlist():
     service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
@@ -179,6 +184,14 @@ async def test_media_playback_service_handle_view_response_controls():
 
     await service.handle_view_response(DummyView("skip"), player, voice)
     assert voice.stop_called is True
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_safe_edit_message_does_not_raise():
+    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
+    message = DummyMessage()
+
+    await service._safe_edit_message(message, view=DummyView(""))
 
 
 @pytest.mark.asyncio

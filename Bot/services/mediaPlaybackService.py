@@ -112,7 +112,8 @@ class MediaPlaybackService:
             await player.delete_all_tracks()
             if voice_client.is_playing() or voice_client.is_paused():
                 voice_client.stop()
-            await voice_client.disconnect()
+            if voice_client.is_connected():
+                await voice_client.disconnect()
         elif view.response == "back":
             previous_track = await player.get_previous_song()
             if previous_track and (voice_client.is_playing() or voice_client.is_paused()):
@@ -156,6 +157,18 @@ class MediaPlaybackService:
             color=0x0033FF,
         )
 
+    async def _safe_edit_message(self, message, *, embed=None, view=None):
+        try:
+            kwargs = {}
+            if embed is not None:
+                kwargs["embed"] = embed
+            if view is not None:
+                kwargs["view"] = view
+            if kwargs:
+                await message.edit(**kwargs)
+        except Exception:
+            await log(f"WARNING: Failed to update player message: {traceback.format_exc()}")
+
     async def start_playback(self, ctx, voice_client, player: MediaPlayer):
         view = playerView(timeout=36000)
         msg = await ctx.send(
@@ -192,7 +205,8 @@ class MediaPlaybackService:
                 voice_client.play(discord.FFmpegPCMAudio(stream_url, **self.ffmpeg_options))
 
                 last_snapshot = await player.get_status_snapshot()
-                await msg.edit(
+                await self._safe_edit_message(
+                    msg,
                     embed=self._build_now_playing_embed(*last_snapshot),
                     view=view,
                 )
@@ -208,7 +222,8 @@ class MediaPlaybackService:
 
                     snapshot = await player.get_status_snapshot()
                     if snapshot != last_snapshot:
-                        await msg.edit(
+                        await self._safe_edit_message(
+                            msg,
                             embed=self._build_now_playing_embed(*snapshot),
                             view=view,
                         )
@@ -216,11 +231,18 @@ class MediaPlaybackService:
 
                     if view.response != "":
                         await self.handle_view_response(view, player, voice_client)
-                        await msg.edit(view=view)
+                        await self._safe_edit_message(msg, view=view)
                         view.response = ""
 
                     await asyncio.sleep(1)
 
             except Exception:
                 await log(f"ERROR: {traceback.format_exc()}")
-                await ctx.send("Произошла ошибка при воспроизведении.")
+                if not (voice_client.is_playing() or voice_client.is_paused()):
+                    await ctx.send("Произошла ошибка при воспроизведении.")
+        else:
+            await player.delete_all_tracks()
+            if voice_client.is_playing() or voice_client.is_paused():
+                voice_client.stop()
+            if voice_client.is_connected():
+                await voice_client.disconnect()
