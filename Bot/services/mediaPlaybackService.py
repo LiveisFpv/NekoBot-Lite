@@ -60,16 +60,38 @@ class MediaPlaybackService:
         with YoutubeDL(self.ydl_opts_meta) as ydl:
             return ydl.extract_info(playlist_url, download=False)
 
-    async def download_video(self, player: MediaPlayer, video_url: str):
-        await player.add_to_queue(video_url)
+    @staticmethod
+    def _resolve_entry_url(entry: dict):
+        candidate = entry.get("url")
+        if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+            return candidate
+        if isinstance(candidate, str) and candidate.strip():
+            if entry.get("ie_key") == "Youtube" or entry.get("extractor_key") == "Youtube":
+                return f"https://www.youtube.com/watch?v={candidate}"
+            return candidate
+
+        webpage_url = entry.get("webpage_url")
+        if isinstance(webpage_url, str) and webpage_url.startswith(("http://", "https://")):
+            return webpage_url
+
+        video_id = entry.get("id")
+        if video_id:
+            return f"https://www.youtube.com/watch?v={video_id}"
+
+        return None
+
+    async def download_video(self, player: MediaPlayer, video_url: str, title: str | None = None):
+        await player.add_to_queue(video_url, title=title)
 
     async def download_playlist(self, player: MediaPlayer, playlist_url: str):
         playlist_dict = await asyncio.to_thread(self.fetch_playlist, playlist_url)
         entries = playlist_dict.get("entries", []) if isinstance(playlist_dict, dict) else []
         for video in entries:
-            video_url = video.get("url") if isinstance(video, dict) else None
+            if not isinstance(video, dict):
+                continue
+            video_url = self._resolve_entry_url(video)
             if video_url:
-                await self.download_video(player, video_url)
+                await self.download_video(player, video_url, title=video.get("title"))
 
     async def handle_view_response(self, view, player: MediaPlayer, voice_client):
         if view.response == "skip":
@@ -89,6 +111,10 @@ class MediaPlaybackService:
             if voice_client.is_playing() or voice_client.is_paused():
                 voice_client.stop()
             await voice_client.disconnect()
+        elif view.response == "back":
+            previous_track = await player.get_previous_song()
+            if previous_track and (voice_client.is_playing() or voice_client.is_paused()):
+                voice_client.stop()
 
     @staticmethod
     def _build_now_playing_embed(title: str, next_title: str, queue_size: int):
@@ -97,7 +123,7 @@ class MediaPlaybackService:
             description=(
                 "**Следующая песня:"
                 + next_title
-                + "     Песен в списке: "
+                + "\nПесен в списке: "
                 + str(queue_size)
                 + "**"
             ),
@@ -111,43 +137,50 @@ class MediaPlaybackService:
             view=view,
         )
 
-        while not player.queue.empty() or player.loop:
-            song, next_song = await player.get_next_song()
+        while await player.has_pending_tracks():
+            song, _ = await player.get_next_song()
             if not song:
                 break
 
             try:
-                info = await asyncio.to_thread(self.fetch_track, song)
+                song_url = song.get("url")
+                if not song_url:
+                    continue
+
+                info = await asyncio.to_thread(self.fetch_track, song_url)
                 if info is None:
                     continue
 
                 stream_url = info.get("url")
                 if not stream_url:
-                    await log(f"WARNING: Missing stream URL for track: {song}")
+                    await log(f"WARNING: Missing stream URL for track: {song_url}")
                     continue
 
-                if next_song is not None:
-                    info_next = await asyncio.to_thread(self.fetch_track, next_song)
-                    next_title = (
-                        info_next.get("title") if isinstance(info_next, dict) else "unknown"
-                    )
-                else:
-                    next_title = "end of playlist"
+                title = info.get("title") or MediaPlayer.get_track_title(song)
+                await player.set_current_track_title(title)
 
                 voice_client.play(discord.FFmpegPCMAudio(stream_url, **self.ffmpeg_options))
-                title = info.get("title", song)
-                embed = self._build_now_playing_embed(
-                    title=title,
-                    next_title=next_title,
-                    queue_size=player.queue.qsize(),
+
+                last_snapshot = await player.get_status_snapshot()
+                await msg.edit(
+                    embed=self._build_now_playing_embed(*last_snapshot),
+                    view=view,
                 )
-                await msg.edit(embed=embed, view=view)
 
                 while voice_client.is_playing() or voice_client.is_paused():
+                    snapshot = await player.get_status_snapshot()
+                    if snapshot != last_snapshot:
+                        await msg.edit(
+                            embed=self._build_now_playing_embed(*snapshot),
+                            view=view,
+                        )
+                        last_snapshot = snapshot
+
                     if view.response != "":
                         await self.handle_view_response(view, player, voice_client)
                         await msg.edit(view=view)
                         view.response = ""
+
                     await asyncio.sleep(1)
 
             except Exception:

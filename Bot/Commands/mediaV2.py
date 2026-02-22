@@ -118,7 +118,11 @@ class MediaCommands(commands.Cog):
         if "playlist" in resolved_url or "list=" in resolved_url:
             await self.playback_service.download_playlist(player, resolved_url)
         else:
-            await self.playback_service.download_video(player, resolved_url)
+            await self.playback_service.download_video(
+                player,
+                resolved_url,
+                title=found_title,
+            )
 
         lock = self.get_playback_lock(guild_id)
         async with lock:

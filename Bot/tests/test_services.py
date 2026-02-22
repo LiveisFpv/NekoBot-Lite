@@ -155,8 +155,8 @@ async def test_media_playback_service_download_playlist():
 
     first, _ = await player.get_next_song()
     second, _ = await player.get_next_song()
-    assert first == "a"
-    assert second == "b"
+    assert first["url"] == "a"
+    assert second["url"] == "b"
 
 
 @pytest.mark.asyncio
@@ -179,6 +179,24 @@ async def test_media_playback_service_handle_view_response_controls():
 
     await service.handle_view_response(DummyView("skip"), player, voice)
     assert voice.stop_called is True
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_handle_view_response_back():
+    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
+    player = MediaPlayer()
+    voice = DummyVoiceClient(playing=True, paused=False)
+
+    await player.add_to_queue("track-a", title="A")
+    await player.add_to_queue("track-b", title="B")
+    await player.get_next_song()  # A starts playing
+    await player.get_next_song()  # B starts playing
+
+    await service.handle_view_response(DummyView("back"), player, voice)
+    assert voice.stop_called is True
+
+    previous, _ = await player.get_next_song()
+    assert previous["url"] == "track-a"
 
 
 @pytest.mark.asyncio
@@ -211,3 +229,21 @@ async def test_media_playback_service_resolve_track_input_with_query():
 
     assert resolved_url == "https://www.youtube.com/watch?v=abc123"
     assert title == "Found song"
+
+
+@pytest.mark.asyncio
+async def test_media_player_status_snapshot_updates_on_queue_change():
+    player = MediaPlayer()
+    await player.add_to_queue("track-a", title="Song A")
+    await player.get_next_song()
+
+    current_title, next_title, queue_size = await player.get_status_snapshot()
+    assert current_title == "Song A"
+    assert next_title == "end of playlist"
+    assert queue_size == 0
+
+    await player.add_to_queue("track-b", title="Song B")
+    current_title, next_title, queue_size = await player.get_status_snapshot()
+    assert current_title == "Song A"
+    assert next_title == "Song B"
+    assert queue_size == 1
