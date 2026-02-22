@@ -51,6 +51,7 @@ class MediaPlaybackService:
             await player.delete_all_tracks()
             if voice_client.is_playing() or voice_client.is_paused():
                 voice_client.stop()
+            await voice_client.disconnect()
 
     @staticmethod
     def _build_now_playing_embed(title: str, next_title: str, queue_size: int):
