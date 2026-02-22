@@ -40,6 +40,7 @@ jobs:
         run: |
           pytest Bot/tests/
   deploy:
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
@@ -57,7 +58,9 @@ jobs:
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
             cd ~/NekoBot-Lite
             git pull origin main
-            docker compose build
-            docker compose down
-            docker compose up -d
+            PROJECT=nekobot
+            docker compose -p "$PROJECT" down --remove-orphans --rmi local
+            docker compose -p "$PROJECT" up -d --build --remove-orphans
+            docker image prune -af --filter "label=com.docker.compose.project=$PROJECT" --filter "until=24h"
+            docker builder prune -af --filter "until=24h"
           EOF
