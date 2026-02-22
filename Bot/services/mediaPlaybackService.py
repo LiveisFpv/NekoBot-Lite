@@ -112,7 +112,8 @@ class MediaPlaybackService:
             await player.delete_all_tracks()
             if voice_client.is_playing() or voice_client.is_paused():
                 voice_client.stop()
-            await voice_client.disconnect()
+            if voice_client.is_connected():
+                await voice_client.disconnect()
         elif view.response == "back":
             previous_track = await player.get_previous_song()
             if previous_track and (voice_client.is_playing() or voice_client.is_paused()):
