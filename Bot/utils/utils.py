@@ -1,2 +1,3 @@
+import logging
 async def log(str):
-    print(str)
+    logging.debug(str)

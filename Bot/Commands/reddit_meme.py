@@ -1,6 +1,6 @@
 from discord.ext.commands import Context
 from discord.ext import commands
-from Reddit.async_praw import get_reddit_instance
+from services.redditService import RedditService
 import random
 import discord
 import asyncio
@@ -8,44 +8,24 @@ import asyncio
 class RedditMemeCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.reddit_service = RedditService()
+
+    async def send_random_subreddit_meme(self, ctx: Context, subreddit_name: str, limit: int = 100):
+        submission = await self.reddit_service.get_random_media_submission(subreddit_name, limit=limit)
+        if submission is None:
+            await ctx.send("Не удалось найти подходящий пост, попробуйте позже.")
+            return
+        embed = discord.Embed(title=submission.title)
+        embed.set_image(url=submission.url)
+        await ctx.send(embed=embed)
         
     @commands.command(name='animeme')
     async def animeme(self,ctx=Context):
-        reddit=await get_reddit_instance()
-        meme_subreddit = await reddit.subreddit('Animemes')
-        memes_submissions = meme_subreddit.hot(limit=100)
-        memes_all=[]
-        async for submission in memes_submissions:
-            memes_all.append(submission)
-        submission=random.choice(memes_all)
-        pov=0
-        while True and pov<1000:
-            pov+=1
-            if ".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url:
-                break
-            submission=random.choice(memes_all)
-        embed = discord.Embed(title=submission.title)
-        embed.set_image(url=submission.url)
-        await ctx.send(embed=embed)
+        await self.send_random_subreddit_meme(ctx, "Animemes")
 
     @commands.command(name='loli')
     async def loli(self,ctx=Context):
-        memes_all=[]
-        reddit=await get_reddit_instance()
-        meme_subreddit = await reddit.subreddit('Lolirefugees')
-        memes_submissions = meme_subreddit.hot(limit=50)
-        async for submission in memes_submissions:
-            memes_all.append(submission)
-        submission=random.choice(memes_all)
-        pov=0
-        while True and pov<1000:
-            pov+=1
-            if ".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url:
-                break
-            submission=random.choice(memes_all)
-        embed = discord.Embed(title=submission.title)
-        embed.set_image(url=submission.url)
-        await ctx.send(embed=embed)
+        await self.send_random_subreddit_meme(ctx, "Lolirefugees", limit=50)
         if random.randint(0,1)==1:
             await asyncio.sleep(5)
             embed=discord.Embed(title="CALL FBI")
@@ -62,26 +42,11 @@ class RedditMemeCommands(commands.Cog):
 
     @commands.command(name='meme')
     async def meme(self,ctx=Context):
-        reddit=await get_reddit_instance()
-        meme_subreddit = await reddit.subreddit('memes')
-        memes_submissions = meme_subreddit.hot(limit=100)
-        memes_all=[]
-        async for submission in memes_submissions:
-            memes_all.append(submission)
-        submission=random.choice(memes_all)
-        pov=0
-        while True and pov<1000:
-            pov+=1
-            if ".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url:
-                break
-            submission=random.choice(memes_all)
-        embed = discord.Embed(title=submission.title)
-        embed.set_image(url=submission.url)
-        await ctx.send(embed=embed)
+        await self.send_random_subreddit_meme(ctx, "memes")
 
     @commands.command(name="Reddit")
     async def Reddit(self,ctx=Context,name=str()):
-        reddit=await get_reddit_instance()
+        reddit = await self.reddit_service.get_reddit_instance()
         mas18=['hentai','bondage','nsfw','xxx','18+','porn','fuck','shit']
         chose=''
         async for submission in  reddit.subreddits.search_by_name(name, False,False):
@@ -128,41 +93,11 @@ class RedditMemeCommands(commands.Cog):
 
     @commands.command(name='genshin')
     async def genshin(self,ctx=Context):
-        reddit=await get_reddit_instance()
-        meme_subreddit = await reddit.subreddit('Genshin_Memepact')
-        memes_submissions = meme_subreddit.hot(limit=100)
-        memes_all=[]
-        async for submission in memes_submissions:
-            memes_all.append(submission)
-        submission=random.choice(memes_all)
-        pov=0
-        while True and pov<1000:
-            pov+=1
-            if ".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url:
-                break
-            submission=random.choice(memes_all)
-        embed = discord.Embed(title=submission.title)
-        embed.set_image(url=submission.url)
-        await ctx.send(embed=embed)
+        await self.send_random_subreddit_meme(ctx, "Genshin_Memepact")
 
     @commands.command(name='potato')
     async def potato(self,ctx=Context):
-        reddit=await get_reddit_instance()
-        meme_subreddit = await reddit.subreddit('potato')
-        memes_submissions = meme_subreddit.hot(limit=100)
-        memes_all=[]
-        async for submission in memes_submissions:
-            memes_all.append(submission)
-        submission=random.choice(memes_all)
-        pov=0
-        while True and pov<1000:
-            pov+=1
-            if ".jpg" in submission.url or ".png" in submission.url or ".gif" in submission.url:
-                break
-            submission=random.choice(memes_all)
-        embed = discord.Embed(title=submission.title)
-        embed.set_image(url=submission.url)
-        await ctx.send(embed=embed)
+        await self.send_random_subreddit_meme(ctx, "potato")
 
     
 async def setup(bot):

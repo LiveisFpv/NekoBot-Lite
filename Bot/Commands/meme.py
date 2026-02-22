@@ -1,64 +1,91 @@
-from discord.ext.commands import Context
-from discord.ext import commands
-import discord
 import asyncio
-import json
-import requests
-from googletrans import Translator
+
+import discord
+from discord.ext import commands
+from discord.ext.commands import Context
+
+from services.memeService import MemeService
+
 
 class MemeCommands(commands.Cog):
+    WAIFU_HELP_TEXT = (
+        "**waifu\nneko\nshinobu\nmegumin\nbully\ncuddle\ncry\nhug\nawoo\nkiss\nlick\npat\nsmug\n"
+        "bonk\nyeet\nblush\nsmile\nwave\nhighfive\nhandhold\nnom\nbite\nglomp\nslap\nkill\nkick\n"
+        "happy\nwink\npoke\ndance\ncringe**"
+    )
+
     def __init__(self, bot):
         self.bot = bot
+        self.meme_service = MemeService()
 
-
-    @commands.command(name='FBI', help='CALL FBI if unlegal material')
-    async def FBI(self,ctx=Context):
-        embed=discord.Embed(title="CALL FBI")
-        embed.set_image(url = "https://static.life.ru/publications/2021/0/7/647334249696.4198.gif")
+    @commands.command(name="FBI", help="CALL FBI if unlegal material")
+    async def FBI(self, ctx=Context):
+        embed = discord.Embed(title="CALL FBI")
+        embed.set_image(url="https://static.life.ru/publications/2021/0/7/647334249696.4198.gif")
         await ctx.send(embed=embed)
         await asyncio.sleep(5)
-        embed=discord.Embed(title="FBI SO CLOSE")
-        embed.set_image(url = "https://i.gifer.com/origin/b3/b3d55ae5d60049304d0bd8a4619efa59.gif")
+
+        embed = discord.Embed(title="FBI SO CLOSE")
+        embed.set_image(url="https://i.gifer.com/origin/b3/b3d55ae5d60049304d0bd8a4619efa59.gif")
         await ctx.send(embed=embed)
         await asyncio.sleep(5)
-        embed=discord.Embed(title="FBI OPEN UP")
-        embed.set_image(url = "https://c.tenor.com/_YqdfwYLiQ4AAAAC/traffic-fbi-open-up.gif")
+
+        embed = discord.Embed(title="FBI OPEN UP")
+        embed.set_image(url="https://c.tenor.com/_YqdfwYLiQ4AAAAC/traffic-fbi-open-up.gif")
         await ctx.send(embed=embed)
-    
-    #Аниме пацанский цитатник
-    @commands.command(name='anime')
-    async def anime(self,ctx=Context):
-        translate=Translator()
-        response = requests.get('https://some-random-api.ml/animu/quote') # Get-запрос
-        json_data = json.loads(response.text) # Извлекаем JSON
-        result = translate.translate(text=json_data["sentence"], src='en', dest='ru')
-        await ctx.send(result.text+" Персонаж: "+json_data["character"]+" Аниме: "+json_data["anime"])
-        #print(json_data)
 
-    @commands.command(name='pikachu')
-    async def pikachu(self,ctx=Context):
-        response = requests.get('https://some-random-api.ml/img/pikachu')
-        json_data = json.loads(response.text) # Извлекаем JSON
+    @commands.command(name="anime")
+    async def anime(self, ctx=Context):
+        try:
+            quote = await self.meme_service.get_anime_quote()
+            sentence = quote.get("sentence", "")
+            character = quote.get("character", "unknown")
+            anime_title = quote.get("anime", "unknown")
+            translated = await self.meme_service.translate_to_ru(sentence)
+        except Exception:
+            await ctx.send("Не удалось получить цитату, попробуйте позже.")
+            return
 
-        embed = discord.Embed(color = 0xff9900, title = 'pikachu') # Создание Embed'a
-        embed.set_image(url = json_data['link']) # Устанавливаем картинку Embed'a
-        await ctx.send(embed = embed) # Отправляем Embed
+        await ctx.send(f"{translated} Персонаж: {character} Аниме: {anime_title}")
 
-    @commands.command('waifu')
-    async def waifu(self, ctx=Context, *, waifu='waifu'):
-        if waifu=='help':
-            embed=discord.Embed(title="WAIFU commands list:", description="**waifu\nneko\nshinobu\nmegumin\nbully\ncuddle\ncry\nhug\nawoo\nkiss\nlick\npat\nsmug\nbonk\nyeet\nblush\nsmile\nwave\nhighfive\nhandhold\nnom\nbite\nglomp\nslap\nkill\nkick\nhappy\nwink\npoke\ndance\ncringe**",color=0x0033ff)
-            r = requests.get("https://api.waifu.pics/sfw/"+"waifu")
-            #print(r.json())
-            imageurl=r.json()["url"]
-            embed.set_image(url=imageurl)
-            await ctx.send(embed=embed)
+    @commands.command(name="pikachu")
+    async def pikachu(self, ctx=Context):
+        try:
+            image_url = await self.meme_service.get_pikachu_image_url()
+        except Exception:
+            await ctx.send("Не удалось загрузить изображение.")
+            return
+
+        if not image_url:
+            await ctx.send("Изображение не найдено.")
+            return
+
+        embed = discord.Embed(color=0xFF9900, title="pikachu")
+        embed.set_image(url=image_url)
+        await ctx.send(embed=embed)
+
+    @commands.command("waifu")
+    async def waifu(self, ctx=Context, *, waifu="waifu"):
+        target = "waifu" if waifu == "help" else waifu
+        try:
+            image_url = await self.meme_service.get_waifu_image_url(target)
+        except Exception:
+            await ctx.send("Не удалось получить изображение.")
+            return
+
+        if waifu == "help":
+            embed = discord.Embed(
+                title="WAIFU commands list:",
+                description=self.WAIFU_HELP_TEXT,
+                color=0x0033FF,
+            )
         else:
-            r = requests.get("https://api.waifu.pics/sfw/"+waifu)
-            #print(r.json())
-            imageurl=r.json()["url"]
-            embed=discord.Embed(title=waifu,color=0x0033ff)
-            embed.set_image(url=imageurl)
-            await ctx.send(embed=embed)
+            embed = discord.Embed(title=waifu, color=0x0033FF)
+
+        if image_url:
+            embed.set_image(url=image_url)
+        await ctx.send(embed=embed)
+
+
 async def setup(bot):
     await bot.add_cog(MemeCommands(bot))
