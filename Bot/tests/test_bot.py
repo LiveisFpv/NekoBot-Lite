@@ -1,4 +1,3 @@
-import pdb
 import discord
 import discord.ext.commands
 import pytest
@@ -80,9 +79,8 @@ async def test_help_command():
 
         # Проверяем, что команда найдена
         assert help_command is not None, "Команда 'help' не найдена"
-        pdb.set_trace()
         # Вызываем команду асинхронно
-        result = await help_command(mock_ctx)
+        await help_command(mock_ctx)
         # Проверяем, что команда была вызвана
         help_command.assert_awaited_once_with(mock_ctx)
 
