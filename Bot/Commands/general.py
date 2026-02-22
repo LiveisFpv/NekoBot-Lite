@@ -19,7 +19,7 @@ class GeneralCommands(commands.Cog):
     @commands.command(name="version", help="Check bot version")
     async def version(self, ctx=Context):
         embed = discord.Embed(
-            title="NEKO bot lite Версия 1.5 Бета:",
+            title="NEKO-lite Версия 1.6",
             description=self.general_service.get_version_text(),
             color=0x0033FF,
         )
@@ -31,7 +31,7 @@ class GeneralCommands(commands.Cog):
         avatar_url = avatar.url if avatar else None
 
         base_embed = discord.Embed(
-            title="NEKO bot lite commands:",
+            title="NEKO-lite commands:",
             description=self.general_service.get_help_text(),
             color=0x0033FF,
         )

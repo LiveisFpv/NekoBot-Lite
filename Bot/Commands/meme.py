@@ -38,15 +38,14 @@ class MemeCommands(commands.Cog):
     async def anime(self, ctx=Context):
         try:
             quote = await self.meme_service.get_anime_quote()
-            sentence = quote.get("sentence", "")
-            character = quote.get("character", "unknown")
-            anime_title = quote.get("anime", "unknown")
-            translated = await self.meme_service.translate_to_ru(sentence)
+            sentence = quote.get("content", "")
+            character = quote.get("character", {}).get("name","unknown")
+            anime_title = quote.get("anime", "").get("name","unknown")
         except Exception:
             await ctx.send("Не удалось получить цитату, попробуйте позже.")
             return
 
-        await ctx.send(f"{translated} Персонаж: {character} Аниме: {anime_title}")
+        await ctx.send(f"{sentence}\nПерсонаж: {character}\nАниме: {anime_title}")
 
     @commands.command(name="pikachu")
     async def pikachu(self, ctx=Context):

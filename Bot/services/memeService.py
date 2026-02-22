@@ -6,8 +6,8 @@ from services.httpService import HttpService
 
 
 class MemeService:
-    ANIME_QUOTE_ENDPOINT = "https://some-random-api.ml/animu/quote"
-    PIKACHU_ENDPOINT = "https://some-random-api.ml/img/pikachu"
+    ANIME_QUOTE_ENDPOINT = "https://api.animechan.io/v1/quotes/random"
+    PIKACHU_ENDPOINT = "api/pikachu"
     WAIFU_ENDPOINT = "https://api.waifu.pics/sfw/"
 
     def __init__(self, http_service: HttpService | None = None):
