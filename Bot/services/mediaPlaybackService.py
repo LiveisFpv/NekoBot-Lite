@@ -240,9 +240,3 @@ class MediaPlaybackService:
                 await log(f"ERROR: {traceback.format_exc()}")
                 if not (voice_client.is_playing() or voice_client.is_paused()):
                     await ctx.send("Произошла ошибка при воспроизведении.")
-        else:
-            await player.delete_all_tracks()
-            if voice_client.is_playing() or voice_client.is_paused():
-                voice_client.stop()
-            if voice_client.is_connected():
-                await voice_client.disconnect()
