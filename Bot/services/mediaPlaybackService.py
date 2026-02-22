@@ -100,8 +100,10 @@ class MediaPlaybackService:
         elif view.response == "play":
             if voice_client.is_playing():
                 voice_client.pause()
+                await player.mark_paused()
             else:
                 voice_client.resume()
+                await player.mark_resumed()
         elif view.response == "loop":
             player.loop_playlist = not player.loop_playlist
         elif view.response == "loop1":
@@ -117,11 +119,35 @@ class MediaPlaybackService:
                 voice_client.stop()
 
     @staticmethod
-    def _build_now_playing_embed(title: str, next_title: str, queue_size: int):
+    def _format_seconds(total_seconds: int | None) -> str:
+        if total_seconds is None:
+            return "--:--"
+        if total_seconds < 0:
+            total_seconds = 0
+        minutes, seconds = divmod(int(total_seconds), 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _build_now_playing_embed(
+        self,
+        title: str,
+        next_title: str,
+        queue_size: int,
+        elapsed_seconds: int,
+        duration_seconds: int | None,
+    ):
+        progress = (
+            f"{self._format_seconds(elapsed_seconds)} / "
+            f"{self._format_seconds(duration_seconds)}"
+        )
         return discord.Embed(
             title="**Сейчас играет** - " + title,
             description=(
-                "**Следующая песня:"
+                + "**Прогресс: "
+                + progress
+                +"\nСледующая песня:"
                 + next_title
                 + "\nПесен в списке: "
                 + str(queue_size)
@@ -157,7 +183,11 @@ class MediaPlaybackService:
                     continue
 
                 title = info.get("title") or MediaPlayer.get_track_title(song)
-                await player.set_current_track_title(title)
+                await player.set_current_track_metadata(
+                    title=title,
+                    duration_seconds=info.get("duration"),
+                )
+                await player.begin_current_playback()
 
                 voice_client.play(discord.FFmpegPCMAudio(stream_url, **self.ffmpeg_options))
 
@@ -167,7 +197,15 @@ class MediaPlaybackService:
                     view=view,
                 )
 
+                was_paused = False
                 while voice_client.is_playing() or voice_client.is_paused():
+                    is_paused = voice_client.is_paused()
+                    if is_paused and not was_paused:
+                        await player.mark_paused()
+                    elif was_paused and not is_paused:
+                        await player.mark_resumed()
+                    was_paused = is_paused
+
                     snapshot = await player.get_status_snapshot()
                     if snapshot != last_snapshot:
                         await msg.edit(
