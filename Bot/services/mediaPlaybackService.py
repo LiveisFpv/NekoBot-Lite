@@ -186,3 +186,8 @@ class MediaPlaybackService:
             except Exception:
                 await log(f"ERROR: {traceback.format_exc()}")
                 await ctx.send("Произошла ошибка при воспроизведении.")
+        else:
+            await player.delete_all_tracks()
+            if voice_client.is_playing() or voice_client.is_paused():
+                voice_client.stop()
+            await voice_client.disconnect()
