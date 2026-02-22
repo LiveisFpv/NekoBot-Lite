@@ -1,55 +1,131 @@
-# NekoLite
-**В стадии рефакторинга**
-Бот созданный для дискорда на языке Python, поддерживает поиск музыки на Ютубе, проигрывание плейлистов, паузу, пропуск треков, возврат к предыдущим трекам, зацикливание песни, исользует Reddit api для мемов.
+# NekoBot Lite
 
-NekoLite commands:
+Discord bot on Python with commands for memes, Reddit, anime search, and music playback in voice channels.
 
-%version-bot version and update description
+## Current Status
 
-%pikachu-send random pikachu
+- Refactor to service-based architecture is in progress and already used in core command groups.
+- Latest in-project update note: `2026-02-22`, version `1.6` (see `Bot/md/update.md`).
 
-%anime-print random anime sentence
+## Tech Stack
 
-%meme
+- Python 3.12
+- `discord.py`
+- `yt-dlp` + `ffmpeg` for music playback
+- `aiohttp` for async HTTP requests
+- `asyncpraw` for Reddit API
 
-%potato-send random potato memes
+## Architecture
 
-%genshin-send genshin memes
+The project is organized as a monolith:
 
-%animeme-anime memes
+- Entry point and bootstrap:
+  - `Bot/main.py`
+- Discord adapter layer (commands/events):
+  - `Bot/Commands/*.py`
+  - `Bot/Events/*.py`
+- Service layer (business logic):
+  - `Bot/services/httpService.py`
+  - `Bot/services/generalService.py`
+  - `Bot/services/animeService.py`
+  - `Bot/services/memeService.py`
+  - `Bot/services/redditService.py`
+  - `Bot/services/mediaService.py`
+  - `Bot/services/mediaPlaybackService.py`
+- UI components for Discord interactions:
+  - `Bot/Music_player/music_player.py`
+- Tests:
+  - `Bot/tests/test_bot.py`
+  - `Bot/tests/test_services.py`
 
-%trans-translate sentences into Russian
+## Development Status
 
-%loli-Use this command only if you want to go to prison for 8 years, but 8 years is not a term...
+- Core command groups are migrated to services.
+- Media playback is split into queue/state and playback orchestration services.
+- Extension loading and startup flow are centralized in `Bot/main.py`.
+- Test suite is green in CI (`pytest Bot/tests`).
 
-This bot automatically translates memes, and created by one person
+## Roadmap
 
-%FBI-FBI OPEN UP
+- Spotify integration for music commands (search/import/play flow).
+- Migration from prefix-only commands to Discord application commands (slash commands).
+- Bot command catalog improvements so commands are visible in Discord command UI and bot profile.
 
-%c-search anime with this character
+## Available Commands (Default prefix: `%`)
 
-%waifu-write '%waifu help' to see the list of commands
+General:
 
-%neko-NEKOCHAN!!!!!
+- `%help`
+- `%version`
+- `%ping`
+- `%support`
+- `%trans <text>`
 
-MUSIC commands:
+Anime:
 
-%play-play track in the queue or add track to the queue or play playlist or add playlist to the queue or search the track and add track to the queue
+- `%c <character name>`
+- `%anime`
 
-%pause-pause the track
+Meme/Media:
 
-%resume-resume the track
+- `%meme`
+- `%animeme`
+- `%genshin`
+- `%potato`
+- `%pikachu`
+- `%waifu`
+- `%waifu help`
+- `%FBI`
 
-%skip-skip the track
+Reddit:
 
-Buttom:
+- `%Reddit <subreddit name>`
 
-Loop
+Music:
 
-Back
+- `%play <url>`
+- `%pause`
+- `%resume`
+- `%skip`
+- `%leave`
 
-Play/pause
+Game:
 
-Skip
+- `%snake`
 
-Stop and leave
+## Environment Variables
+
+- `DISCORD_TOKEN` (or `BOT_TOKEN` / `TOKEN`)
+- `BOT_PREFIX` (default: `%`)
+- `DISCORD_BOT_NAME`
+- `DISCORD_BOT_ID`
+- `REDDIT_CLIENT_ID`
+- `REDDIT_CLIENT_SECRET`
+- `REDDIT_USER_AGENT`
+- `YTDLP_REMOTE_COMPONENTS` (default: `ejs:github`)
+- `YTDLP_CACHE_DIR`
+
+## Docker Run
+
+`docker-compose.yml` is ready for running the bot container:
+
+```bash
+docker compose up -d --build
+```
+
+Pass required env vars through shell or `.env` file (`DISCORD_TOKEN` is mandatory).
+
+## Tests
+
+Run all tests:
+
+```bash
+pytest Bot/tests
+```
+
+## CI/CD
+
+GitHub Actions workflow (`.github/workflows/python-ci.yml`) currently:
+
+- runs tests on push to `main`
+- deploys to VPS after successful test job

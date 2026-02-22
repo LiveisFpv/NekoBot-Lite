@@ -1,5 +1,5 @@
 from discord.ext import commands
-from Utils.utils import log
+from utils.utils import log
 import discord
 class EventHandler(commands.Cog):
     def __init__(self, bot):

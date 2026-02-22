@@ -12,7 +12,7 @@ from main import bot,load_extensions
 @pytest.mark.asyncio
 async def test_load_extension():
     # Загрузить команды перед выполнением теста
-    await load_extensions()
+    await load_extensions(bot)
     
     # Проверяем, что все расширения загружены
     assert len(bot.extensions) == 7, "Не все расширения загружены"
@@ -20,7 +20,7 @@ async def test_load_extension():
 @pytest.mark.asyncio
 async def test_ping_command():
     # Загрузить команды перед выполнением теста
-    # await load_extensions()
+    # await load_extensions(bot)
 
     # Создаем mock объект для ctx
     mock_ctx = AsyncMock()
@@ -39,7 +39,7 @@ async def test_ping_command():
 @pytest.mark.asyncio
 async def test_version_command():
     # Загрузить команды перед выполнением теста
-    # await load_extensions()
+    # await load_extensions(bot)
     # Создаем mock объект для ctx
     mock_ctx = AsyncMock()
     
@@ -87,7 +87,7 @@ async def test_help_command():
 @pytest.mark.asyncio
 async def test_support():
     # Загрузить команды перед выполнением теста
-    # await load_extensions()
+    # await load_extensions(bot)
     # Создаем mock объект для ctx
     mock_ctx = AsyncMock()
     
