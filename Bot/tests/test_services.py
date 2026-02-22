@@ -109,6 +109,7 @@ class DummyVoiceClient:
         self.stop_called = False
         self.pause_called = False
         self.resume_called = False
+        self.disconnected = False
 
     def is_playing(self):
         return self._playing
@@ -130,6 +131,9 @@ class DummyVoiceClient:
         self.resume_called = True
         self._playing = True
         self._paused = False
+
+    async def disconnect(self):
+        self.disconnected = True
 
 
 class DummyView:
@@ -175,3 +179,35 @@ async def test_media_playback_service_handle_view_response_controls():
 
     await service.handle_view_response(DummyView("skip"), player, voice)
     assert voice.stop_called is True
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_resolve_track_input_with_url():
+    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
+
+    resolved_url, title = await service.resolve_track_input("https://example.com/track")
+
+    assert resolved_url == "https://example.com/track"
+    assert title is None
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_resolve_track_input_with_query():
+    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
+
+    with patch.object(
+        MediaPlaybackService,
+        "fetch_search_track",
+        return_value={
+            "entries": [
+                {
+                    "webpage_url": "https://www.youtube.com/watch?v=abc123",
+                    "title": "Found song",
+                }
+            ]
+        },
+    ):
+        resolved_url, title = await service.resolve_track_input("found song query")
+
+    assert resolved_url == "https://www.youtube.com/watch?v=abc123"
+    assert title == "Found song"

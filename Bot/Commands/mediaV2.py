@@ -99,18 +99,26 @@ class MediaCommands(commands.Cog):
             await ctx.send("Вы не подключены к голосовому каналу.")
             return None
 
-    @commands.command(name="play", help="Play a song from a URL")
-    async def play(self, ctx, url: str):
+    @commands.command(name="play", help="Play a song from URL or search query")
+    async def play(self, ctx, *, query: str):
         voice_client = await self.connect_to_channel(ctx)
         if not voice_client:
             return
 
+        resolved_url, found_title = await self.playback_service.resolve_track_input(query)
+        if not resolved_url:
+            await ctx.send("Не удалось найти трек по запросу.")
+            return
+
+        if found_title:
+            await ctx.send(f"Найден трек: {found_title}")
+
         guild_id = ctx.guild.id
         player = await self.get_player(guild_id)
-        if "playlist" in url or "list=" in url:
-            await self.playback_service.download_playlist(player, url)
+        if "playlist" in resolved_url or "list=" in resolved_url:
+            await self.playback_service.download_playlist(player, resolved_url)
         else:
-            await self.playback_service.download_video(player, url)
+            await self.playback_service.download_video(player, resolved_url)
 
         lock = self.get_playback_lock(guild_id)
         async with lock:

@@ -1,5 +1,6 @@
 import asyncio
 import traceback
+from urllib.parse import urlparse
 
 import discord
 from yt_dlp import YoutubeDL
@@ -14,6 +15,42 @@ class MediaPlaybackService:
         self.ydl_opts = ydl_opts
         self.ydl_opts_meta = ydl_opts_meta
         self.ffmpeg_options = ffmpeg_options
+
+    @staticmethod
+    def is_url(value: str) -> bool:
+        parsed = urlparse((value or "").strip())
+        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+    def fetch_search_track(self, query: str):
+        opts = dict(self.ydl_opts_meta)
+        opts["extract_flat"] = False
+        opts["quiet"] = True
+        opts["noplaylist"] = True
+        with YoutubeDL(opts) as ydl:
+            return ydl.extract_info(f"ytsearch1:{query}", download=False)
+
+    async def resolve_track_input(self, track_input: str):
+        candidate = (track_input or "").strip()
+        if not candidate:
+            return None, None
+
+        if self.is_url(candidate):
+            return candidate, None
+
+        info = await asyncio.to_thread(self.fetch_search_track, candidate)
+        if not isinstance(info, dict):
+            return None, None
+
+        entries = info.get("entries") or []
+        first = next((entry for entry in entries if entry), None)
+        if not first:
+            return None, None
+
+        resolved_url = first.get("webpage_url")
+        if not resolved_url and first.get("id"):
+            resolved_url = f"https://www.youtube.com/watch?v={first['id']}"
+
+        return resolved_url, first.get("title")
 
     def fetch_track(self, url: str):
         with YoutubeDL(self.ydl_opts) as ydl:
