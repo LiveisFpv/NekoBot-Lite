@@ -100,10 +100,8 @@ class MediaPlaybackService:
         elif view.response == "play":
             if voice_client.is_playing():
                 voice_client.pause()
-                await player.mark_paused()
             else:
                 voice_client.resume()
-                await player.mark_resumed()
         elif view.response == "loop":
             player.loop_playlist = not player.loop_playlist
         elif view.response == "loop1":
@@ -112,43 +110,18 @@ class MediaPlaybackService:
             await player.delete_all_tracks()
             if voice_client.is_playing() or voice_client.is_paused():
                 voice_client.stop()
-            if voice_client.is_connected():
-                await voice_client.disconnect()
+            await voice_client.disconnect()
         elif view.response == "back":
             previous_track = await player.get_previous_song()
             if previous_track and (voice_client.is_playing() or voice_client.is_paused()):
                 voice_client.stop()
 
     @staticmethod
-    def _format_seconds(total_seconds: int | None) -> str:
-        if total_seconds is None:
-            return "--:--"
-        if total_seconds < 0:
-            total_seconds = 0
-        minutes, seconds = divmod(int(total_seconds), 60)
-        hours, minutes = divmod(minutes, 60)
-        if hours:
-            return f"{hours}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes:02d}:{seconds:02d}"
-
-    def _build_now_playing_embed(
-        self,
-        title: str,
-        next_title: str,
-        queue_size: int,
-        elapsed_seconds: int,
-        duration_seconds: int | None,
-    ):
-        progress = (
-            f"{self._format_seconds(elapsed_seconds)} / "
-            f"{self._format_seconds(duration_seconds)}"
-        )
+    def _build_now_playing_embed(title: str, next_title: str, queue_size: int):
         return discord.Embed(
             title="**Сейчас играет** - " + title,
             description=(
-                + "**Прогресс: "
-                + progress
-                +"\nСледующая песня:"
+                "**Следующая песня:"
                 + next_title
                 + "\nПесен в списке: "
                 + str(queue_size)
@@ -156,18 +129,6 @@ class MediaPlaybackService:
             ),
             color=0x0033FF,
         )
-
-    async def _safe_edit_message(self, message, *, embed=None, view=None):
-        try:
-            kwargs = {}
-            if embed is not None:
-                kwargs["embed"] = embed
-            if view is not None:
-                kwargs["view"] = view
-            if kwargs:
-                await message.edit(**kwargs)
-        except Exception:
-            await log(f"WARNING: Failed to update player message: {traceback.format_exc()}")
 
     async def start_playback(self, ctx, voice_client, player: MediaPlayer):
         view = playerView(timeout=36000)
@@ -217,12 +178,11 @@ class MediaPlaybackService:
 
                     if view.response != "":
                         await self.handle_view_response(view, player, voice_client)
-                        await self._safe_edit_message(msg, view=view)
+                        await msg.edit(view=view)
                         view.response = ""
 
                     await asyncio.sleep(1)
 
             except Exception:
                 await log(f"ERROR: {traceback.format_exc()}")
-                if not (voice_client.is_playing() or voice_client.is_paused()):
-                    await ctx.send("Произошла ошибка при воспроизведении.")
+                await ctx.send("Произошла ошибка при воспроизведении.")

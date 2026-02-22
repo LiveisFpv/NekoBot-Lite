@@ -141,11 +141,6 @@ class DummyView:
         self.response = response
 
 
-class DummyMessage:
-    async def edit(self, **kwargs):
-        raise RuntimeError("edit failed")
-
-
 @pytest.mark.asyncio
 async def test_media_playback_service_download_playlist():
     service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
