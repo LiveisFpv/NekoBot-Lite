@@ -187,14 +187,6 @@ async def test_media_playback_service_handle_view_response_controls():
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_safe_edit_message_does_not_raise():
-    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
-    message = DummyMessage()
-
-    await service._safe_edit_message(message, view=DummyView(""))
-
-
-@pytest.mark.asyncio
 async def test_media_playback_service_handle_view_response_back():
     service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
     player = MediaPlayer()
@@ -250,51 +242,13 @@ async def test_media_player_status_snapshot_updates_on_queue_change():
     await player.add_to_queue("track-a", title="Song A")
     await player.get_next_song()
 
-    current_title, next_title, queue_size, elapsed_seconds, duration_seconds = (
-        await player.get_status_snapshot()
-    )
+    current_title, next_title, queue_size = await player.get_status_snapshot()
     assert current_title == "Song A"
     assert next_title == "end of playlist"
     assert queue_size == 0
-    assert elapsed_seconds == 0
-    assert duration_seconds is None
 
     await player.add_to_queue("track-b", title="Song B")
-    current_title, next_title, queue_size, elapsed_seconds, duration_seconds = (
-        await player.get_status_snapshot()
-    )
+    current_title, next_title, queue_size = await player.get_status_snapshot()
     assert current_title == "Song A"
     assert next_title == "Song B"
     assert queue_size == 1
-    assert elapsed_seconds == 0
-    assert duration_seconds is None
-
-
-@pytest.mark.asyncio
-async def test_media_player_elapsed_and_duration_tracking():
-    player = MediaPlayer()
-    await player.add_to_queue("track-a", title="Song A")
-    await player.get_next_song()
-    await player.set_current_track_metadata(duration_seconds=120)
-
-    with patch("services.mediaService.time.monotonic", return_value=10):
-        await player.begin_current_playback()
-
-    with patch("services.mediaService.time.monotonic", return_value=40):
-        _, _, _, elapsed_seconds, duration_seconds = await player.get_status_snapshot()
-    assert elapsed_seconds == 30
-    assert duration_seconds == 120
-
-    with patch("services.mediaService.time.monotonic", return_value=50):
-        await player.mark_paused()
-
-    with patch("services.mediaService.time.monotonic", return_value=80):
-        _, _, _, elapsed_seconds, _ = await player.get_status_snapshot()
-    assert elapsed_seconds == 40
-
-    with patch("services.mediaService.time.monotonic", return_value=90):
-        await player.mark_resumed()
-
-    with patch("services.mediaService.time.monotonic", return_value=100):
-        _, _, _, elapsed_seconds, _ = await player.get_status_snapshot()
-    assert elapsed_seconds == 50

@@ -112,8 +112,7 @@ class MediaPlaybackService:
             await player.delete_all_tracks()
             if voice_client.is_playing() or voice_client.is_paused():
                 voice_client.stop()
-            if voice_client.is_connected():
-                await voice_client.disconnect()
+            await voice_client.disconnect()
         elif view.response == "back":
             previous_track = await player.get_previous_song()
             if previous_track and (voice_client.is_playing() or voice_client.is_paused()):
@@ -196,34 +195,20 @@ class MediaPlaybackService:
                     continue
 
                 title = info.get("title") or MediaPlayer.get_track_title(song)
-                await player.set_current_track_metadata(
-                    title=title,
-                    duration_seconds=info.get("duration"),
-                )
-                await player.begin_current_playback()
+                await player.set_current_track_title(title)
 
                 voice_client.play(discord.FFmpegPCMAudio(stream_url, **self.ffmpeg_options))
 
                 last_snapshot = await player.get_status_snapshot()
-                await self._safe_edit_message(
-                    msg,
+                await msg.edit(
                     embed=self._build_now_playing_embed(*last_snapshot),
                     view=view,
                 )
 
-                was_paused = False
                 while voice_client.is_playing() or voice_client.is_paused():
-                    is_paused = voice_client.is_paused()
-                    if is_paused and not was_paused:
-                        await player.mark_paused()
-                    elif was_paused and not is_paused:
-                        await player.mark_resumed()
-                    was_paused = is_paused
-
                     snapshot = await player.get_status_snapshot()
                     if snapshot != last_snapshot:
-                        await self._safe_edit_message(
-                            msg,
+                        await msg.edit(
                             embed=self._build_now_playing_embed(*snapshot),
                             view=view,
                         )
