@@ -25,7 +25,7 @@ class GeneralCommands(commands.Cog):
         )
         await ctx.send(embed=embed)
 
-    @commands.command(name="help", help="Show help information")
+    @commands.hybrid_command(name="help", help="Show help information")
     async def help(self, ctx=Context):
         avatar = getattr(getattr(self.bot, "user", None), "avatar", None)
         avatar_url = avatar.url if avatar else None
@@ -68,8 +68,8 @@ class GeneralCommands(commands.Cog):
             pass
         await ctx.send(embed=embed)
 
-    @commands.command(name="trans", help="Translate text")
-    async def trans(self, ctx=Context):
+    @commands.command(name="tran", help="Translate text")
+    async def tran(self, ctx=Context):
         parts = ctx.message.content.split(maxsplit=1)
         raw_text = parts[1] if len(parts) > 1 else ""
         if not raw_text.strip():

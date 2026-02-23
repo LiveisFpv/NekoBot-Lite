@@ -37,6 +37,8 @@ async def load_extensions(bot_instance: commands.Bot):
 def configure_setup_hook(bot_instance: commands.Bot):
     async def _setup_hook():
         await load_extensions(bot_instance)
+        # Register hybrid/app commands so they appear as slash commands.
+        await bot_instance.tree.sync()
 
     bot_instance.setup_hook = _setup_hook
 

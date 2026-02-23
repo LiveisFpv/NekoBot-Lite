@@ -99,7 +99,7 @@ class MediaCommands(commands.Cog):
             await ctx.send("Вы не подключены к голосовому каналу.")
             return None
 
-    @commands.command(name="play", help="Play a song from URL or search query")
+    @commands.hybrid_command(name="play", help="Play a song from URL or search query")
     async def play(self, ctx, *, query: str):
         voice_client = await self.connect_to_channel(ctx)
         if not voice_client:

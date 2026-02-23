@@ -40,7 +40,7 @@ class RedditMemeCommands(commands.Cog):
             embed.set_image(url = "https://c.tenor.com/_YqdfwYLiQ4AAAAC/traffic-fbi-open-up.gif")
             await ctx.send(embed=embed)
 
-    @commands.command(name='meme')
+    @commands.hybrid_command(name='meme')
     async def meme(self,ctx=Context):
         await self.send_random_subreddit_meme(ctx, "memes")
 
@@ -95,7 +95,7 @@ class RedditMemeCommands(commands.Cog):
     async def genshin(self,ctx=Context):
         await self.send_random_subreddit_meme(ctx, "Genshin_Memepact")
 
-    @commands.command(name='potato')
+    @commands.hybrid_command(name='potato')
     async def potato(self,ctx=Context):
         await self.send_random_subreddit_meme(ctx, "potato")
 

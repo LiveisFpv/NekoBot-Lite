@@ -62,7 +62,7 @@ class MemeCommands(commands.Cog):
         embed.set_image(url=image_url)
         await ctx.send(embed=embed)
 
-    @commands.command("waifu")
+    @commands.hybrid_command("waifu")
     async def waifu(self, ctx=Context, *, waifu="waifu"):
         target = "waifu" if waifu == "help" else waifu
         try:
