@@ -5,7 +5,7 @@ Discord bot on Python with commands for memes, Reddit, anime search, and music p
 ## Current Status
 
 - Refactor to service-based architecture is in progress and already used in core command groups.
-- Latest in-project update note: `2026-02-22`, version `1.6` (see `Bot/md/update.md`).
+- Latest in-project update note: (see `Bot/md/update.md`).
 
 ## Tech Stack
 
