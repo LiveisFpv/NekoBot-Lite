@@ -19,7 +19,7 @@ class GeneralCommands(commands.Cog):
     @commands.hybrid_command(name="version", help="Check bot version")
     async def version(self, ctx=Context):
         embed = discord.Embed(
-            title="NEKO-lite Версия 1.6",
+            title="NEKO-lite Версия 1.6.2",
             description=self.general_service.get_version_text(),
             color=0x0033FF,
         )

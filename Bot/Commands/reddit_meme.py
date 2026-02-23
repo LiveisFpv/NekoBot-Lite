@@ -44,7 +44,7 @@ class RedditMemeCommands(commands.Cog):
     async def meme(self,ctx=Context):
         await self.send_random_subreddit_meme(ctx, "memes")
 
-    @commands.hybrid_command(name="Reddit")
+    @commands.hybrid_command(name="reddit", aliases=["Reddit"])
     async def Reddit(self,ctx=Context,name=str()):
         reddit = await self.reddit_service.get_reddit_instance()
         mas18=['hentai','bondage','nsfw','xxx','18+','porn','fuck','shit']

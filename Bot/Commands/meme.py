@@ -18,7 +18,7 @@ class MemeCommands(commands.Cog):
         self.bot = bot
         self.meme_service = MemeService()
 
-    @commands.hybrid_command(name="FBI", help="CALL FBI if unlegal material")
+    @commands.hybrid_command(name="fbi", aliases=["FBI"], help="CALL FBI if unlegal material")
     async def FBI(self, ctx=Context):
         embed = discord.Embed(title="CALL FBI")
         embed.set_image(url="https://static.life.ru/publications/2021/0/7/647334249696.4198.gif")
