@@ -5,7 +5,7 @@ from discord.ext import commands
 class GameCommand(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.command(name='snake',help='Its snake game only')
+    @commands.hybrid_command(name='snake',help='Its snake game only')
     async def snake(self, ctx=Context,name="text"):
         view=Snake()
         if name!="text":

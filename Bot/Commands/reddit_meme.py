@@ -19,11 +19,11 @@ class RedditMemeCommands(commands.Cog):
         embed.set_image(url=submission.url)
         await ctx.send(embed=embed)
         
-    @commands.command(name='animeme')
+    @commands.hybrid_command(name='animeme')
     async def animeme(self,ctx=Context):
         await self.send_random_subreddit_meme(ctx, "Animemes")
 
-    @commands.command(name='loli')
+    @commands.hybrid_command(name='loli')
     async def loli(self,ctx=Context):
         await self.send_random_subreddit_meme(ctx, "Lolirefugees", limit=50)
         if random.randint(0,1)==1:
@@ -44,7 +44,7 @@ class RedditMemeCommands(commands.Cog):
     async def meme(self,ctx=Context):
         await self.send_random_subreddit_meme(ctx, "memes")
 
-    @commands.command(name="Reddit")
+    @commands.hybrid_command(name="Reddit")
     async def Reddit(self,ctx=Context,name=str()):
         reddit = await self.reddit_service.get_reddit_instance()
         mas18=['hentai','bondage','nsfw','xxx','18+','porn','fuck','shit']
@@ -91,7 +91,7 @@ class RedditMemeCommands(commands.Cog):
                     await ctx.send(embed=embed)
                     await ctx.send(submission.url)
 
-    @commands.command(name='genshin')
+    @commands.hybrid_command(name='genshin')
     async def genshin(self,ctx=Context):
         await self.send_random_subreddit_meme(ctx, "Genshin_Memepact")
 

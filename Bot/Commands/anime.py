@@ -10,7 +10,7 @@ class AnimeCommands(commands.Cog):
         self.bot = bot
         self.anime_service = AnimeService()
 
-    @commands.command(name="c", help="Search anime person in DB")
+    @commands.hybrid_command(name="c", help="Search anime person in DB")
     async def c(self, ctx=Context, *, query="naruto"):
         try:
             character = await self.anime_service.find_character(query)

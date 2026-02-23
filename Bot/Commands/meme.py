@@ -18,7 +18,7 @@ class MemeCommands(commands.Cog):
         self.bot = bot
         self.meme_service = MemeService()
 
-    @commands.command(name="FBI", help="CALL FBI if unlegal material")
+    @commands.hybrid_command(name="FBI", help="CALL FBI if unlegal material")
     async def FBI(self, ctx=Context):
         embed = discord.Embed(title="CALL FBI")
         embed.set_image(url="https://static.life.ru/publications/2021/0/7/647334249696.4198.gif")
@@ -34,7 +34,7 @@ class MemeCommands(commands.Cog):
         embed.set_image(url="https://c.tenor.com/_YqdfwYLiQ4AAAAC/traffic-fbi-open-up.gif")
         await ctx.send(embed=embed)
 
-    @commands.command(name="anime")
+    @commands.hybrid_command(name="anime")
     async def anime(self, ctx=Context):
         try:
             quote = await self.meme_service.get_anime_quote()
@@ -46,7 +46,7 @@ class MemeCommands(commands.Cog):
             return
         await ctx.send(f"{sentence}\nПерсонаж: {character}\nАниме: {anime_title}")
 
-    @commands.command(name="pikachu")
+    @commands.hybrid_command(name="pikachu")
     async def pikachu(self, ctx=Context):
         try:
             image_url = await self.meme_service.get_pikachu_image_url()

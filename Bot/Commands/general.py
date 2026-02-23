@@ -11,12 +11,12 @@ class GeneralCommands(commands.Cog):
         self.bot = bot
         self.general_service = GeneralService()
 
-    @commands.command(name="ping", help="Check if the bot is online")
+    @commands.hybrid_command(name="ping", help="Check if the bot is online")
     async def ping(self, ctx: Context):
         latency = self.bot.latency
         await ctx.send(f"Pong! {latency}s")
 
-    @commands.command(name="version", help="Check bot version")
+    @commands.hybrid_command(name="version", help="Check bot version")
     async def version(self, ctx=Context):
         embed = discord.Embed(
             title="NEKO-lite Версия 1.6",
@@ -51,7 +51,7 @@ class GeneralCommands(commands.Cog):
         )
         await ctx.send(embed=music_embed)
 
-    @commands.command(name="support", help="Show support information")
+    @commands.hybrid_command(name="support", help="Show support information")
     async def support(self, ctx=Context):
         embed = discord.Embed(
             title="Support",
@@ -68,7 +68,7 @@ class GeneralCommands(commands.Cog):
             pass
         await ctx.send(embed=embed)
 
-    @commands.command(name="tran", help="Translate text")
+    @commands.hybrid_command(name="tran", help="Translate text")
     async def tran(self, ctx=Context):
         parts = ctx.message.content.split(maxsplit=1)
         raw_text = parts[1] if len(parts) > 1 else ""

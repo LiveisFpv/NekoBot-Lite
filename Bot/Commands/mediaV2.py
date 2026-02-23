@@ -131,7 +131,7 @@ class MediaCommands(commands.Cog):
                     self.run_playback_task(guild_id, ctx, voice_client, player)
                 )
 
-    @commands.command(name="skip", help="skip current track")
+    @commands.hybrid_command(name="skip", help="skip current track")
     async def skip(self, ctx=Context):
         voice_client = ctx.message.guild.voice_client
         if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
@@ -139,7 +139,7 @@ class MediaCommands(commands.Cog):
         else:
             await ctx.send("Бот ничего не проигрывает в данный момент")
 
-    @commands.command(name="pause", help="Pause current track")
+    @commands.hybrid_command(name="pause", help="Pause current track")
     async def pause(self, ctx=Context):
         voice_client = ctx.message.guild.voice_client
         if voice_client and voice_client.is_playing():
@@ -147,7 +147,7 @@ class MediaCommands(commands.Cog):
         else:
             await ctx.send("Бот ничего не проигрывает в данный момент")
 
-    @commands.command(name="resume", help="resume current track")
+    @commands.hybrid_command(name="resume", help="resume current track")
     async def resume(self, ctx=Context):
         voice_client = ctx.message.guild.voice_client
         if voice_client and voice_client.is_paused():
@@ -155,7 +155,7 @@ class MediaCommands(commands.Cog):
         else:
             await ctx.send("Бот ничего не проигрывал до этого. Используйте %play команду")
 
-    @commands.command(name="leave", help="leave from current channel")
+    @commands.hybrid_command(name="leave", help="leave from current channel")
     async def leave(self, ctx):
         voice_client = ctx.voice_client
         if voice_client is not None:
