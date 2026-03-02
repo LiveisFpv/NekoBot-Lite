@@ -86,19 +86,6 @@ class MediaCommands(commands.Cog):
             self.players[guild_id] = MediaPlayer()
         return self.players[guild_id]
 
-    async def connect_to_channel(self, ctx):
-        try:
-            channel = ctx.author.voice.channel
-            voice_client = ctx.voice_client
-            if voice_client and voice_client.is_connected():
-                await voice_client.move_to(channel)
-            else:
-                await channel.connect()
-            return ctx.guild.voice_client
-        except AttributeError:
-            await ctx.send("Вы не подключены к голосовому каналу.")
-            return None
-
     async def _defer_if_interaction(self, ctx):
         interaction = getattr(ctx, "interaction", None)
         if interaction is None:
@@ -109,8 +96,33 @@ class MediaCommands(commands.Cog):
             elif not interaction.response.is_done():
                 await interaction.response.defer(thinking=True)
         except Exception:
-            # Keep command flow for prefix invocation and edge interaction cases.
             pass
+
+    async def _send_ctx_message(self, ctx, content: str):
+        interaction = getattr(ctx, "interaction", None)
+        if interaction is None:
+            await ctx.send(content)
+            return
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(content)
+            else:
+                await interaction.response.send_message(content)
+        except Exception:
+            await ctx.send(content)
+
+    async def connect_to_channel(self, ctx):
+        try:
+            channel = ctx.author.voice.channel
+            voice_client = ctx.voice_client
+            if voice_client and voice_client.is_connected():
+                await voice_client.move_to(channel)
+            else:
+                await channel.connect()
+            return ctx.guild.voice_client
+        except AttributeError:
+            await self._send_ctx_message(ctx, "Вы не подключены к голосовому каналу.")
+            return None
 
     @commands.hybrid_command(name="play", help="Play a song from URL or search query")
     async def play(self, ctx, *, query: str):
@@ -122,22 +134,25 @@ class MediaCommands(commands.Cog):
 
         resolved_url, found_title = await self.playback_service.resolve_track_input(query)
         if not resolved_url:
-            await ctx.send("Не удалось найти трек по запросу.")
+            await self._send_ctx_message(ctx, "Не удалось найти трек по запросу.")
             return
-
-        if found_title:
-            await ctx.send(f"Найден трек: {found_title}")
 
         guild_id = ctx.guild.id
         player = await self.get_player(guild_id)
+
         if "playlist" in resolved_url or "list=" in resolved_url:
             await self.playback_service.download_playlist(player, resolved_url)
+            await self._send_ctx_message(ctx, "Плейлист добавлен.")
         else:
             await self.playback_service.download_video(
                 player,
                 resolved_url,
                 title=found_title,
             )
+            if found_title:
+                await self._send_ctx_message(ctx, f"Найден трек: {found_title}")
+            else:
+                await self._send_ctx_message(ctx, "Трек добавлен в очередь")
 
         lock = self.get_playback_lock(guild_id)
         async with lock:
@@ -146,13 +161,13 @@ class MediaCommands(commands.Cog):
                     self.run_playback_task(guild_id, ctx, voice_client, player)
                 )
 
-    @commands.hybrid_command(name="skip", help="skip current track")
+    @commands.hybrid_command(name="skip", help="Skip current track")
     async def skip(self, ctx=Context):
         voice_client = ctx.message.guild.voice_client
         if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
             voice_client.stop()
         else:
-            await ctx.send("Бот ничего не проигрывает в данный момент")
+            await self._send_ctx_message(ctx, "Бот ничего не проигрывает в данный момент")
 
     @commands.hybrid_command(name="pause", help="Pause current track")
     async def pause(self, ctx=Context):
@@ -160,24 +175,24 @@ class MediaCommands(commands.Cog):
         if voice_client and voice_client.is_playing():
             voice_client.pause()
         else:
-            await ctx.send("Бот ничего не проигрывает в данный момент")
+            await self._send_ctx_message(ctx, "Бот ничего не проигрывает в данный момент")
 
-    @commands.hybrid_command(name="resume", help="resume current track")
+    @commands.hybrid_command(name="resume", help="Resume current track")
     async def resume(self, ctx=Context):
         voice_client = ctx.message.guild.voice_client
         if voice_client and voice_client.is_paused():
             voice_client.resume()
         else:
-            await ctx.send("Бот ничего не проигрывал до этого. Используйте %play команду")
+            await self._send_ctx_message(ctx, "Бот ничего не проигрывал до этого. Используйте %play команду")
 
-    @commands.hybrid_command(name="leave", help="leave from current channel")
+    @commands.hybrid_command(name="leave", help="Leave current voice channel")
     async def leave(self, ctx):
         voice_client = ctx.voice_client
         if voice_client is not None:
             await voice_client.disconnect()
-            await ctx.send("Бот отключился от голосового канала.")
+            await self._send_ctx_message(ctx, "Бот отключился от голосового канала.")
         else:
-            await ctx.send("Бот не подключён к голосовому каналу.")
+            await self._send_ctx_message(ctx, "Бот не подключён к голосовому каналу.")
 
 
 async def setup(bot):
