@@ -59,6 +59,6 @@ class playerView(View):
         self.message_id = interaction.message.id
         await interaction.response.defer()
     
-    @discord.ui.button(style=ButtonStyle.grey, emoji="", custom_id="O", row=1)
+    @discord.ui.button(style=ButtonStyle.grey, emoji="ㅤ", custom_id="O", row=1)
     async def button_callback6(self, interaction: discord.Interaction, button: Button):
         await interaction.response.defer()
