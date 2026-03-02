@@ -99,8 +99,23 @@ class MediaCommands(commands.Cog):
             await ctx.send("Вы не подключены к голосовому каналу.")
             return None
 
+    async def _defer_if_interaction(self, ctx):
+        interaction = getattr(ctx, "interaction", None)
+        if interaction is None:
+            return
+        try:
+            if hasattr(ctx, "defer"):
+                await ctx.defer()
+            elif not interaction.response.is_done():
+                await interaction.response.defer(thinking=True)
+        except Exception:
+            # Keep command flow for prefix invocation and edge interaction cases.
+            pass
+
     @commands.hybrid_command(name="play", help="Play a song from URL or search query")
     async def play(self, ctx, *, query: str):
+        await self._defer_if_interaction(ctx)
+
         voice_client = await self.connect_to_channel(ctx)
         if not voice_client:
             return
