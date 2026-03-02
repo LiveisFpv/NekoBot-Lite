@@ -78,6 +78,8 @@ class MediaCommands(commands.Cog):
     async def run_playback_task(self, guild_id: int, ctx, voice_client, player: MediaPlayer):
         try:
             await self.playback_service.start_playback(ctx, voice_client, player)
+        except Exception as error:
+            await self._send_ctx_message(ctx, f"Playback task failed: {error}")
         finally:
             self.playback_tasks.pop(guild_id, None)
 
