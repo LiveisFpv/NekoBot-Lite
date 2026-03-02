@@ -132,73 +132,129 @@ class MediaPlaybackService:
             color=0x0033FF,
         )
 
+    @staticmethod
+    def _is_voice_active(voice_client) -> bool:
+        return voice_client is not None and (voice_client.is_playing() or voice_client.is_paused())
+
+    @staticmethod
+    def _is_voice_connected(voice_client) -> bool:
+        if voice_client is None:
+            return False
+        is_connected = getattr(voice_client, "is_connected", None)
+        if callable(is_connected):
+            try:
+                return bool(is_connected())
+            except Exception:
+                return False
+        return True
+
+    async def _send_player_message(self, ctx, embed: discord.Embed, view):
+        channel = getattr(ctx, "channel", None)
+        if channel is not None:
+            return await channel.send(embed=embed, view=view)
+        return await ctx.send(embed=embed, view=view)
+
+    async def _safe_edit_player_message(self, message, **kwargs) -> bool:
+        if message is None:
+            return False
+        try:
+            await message.edit(**kwargs)
+            return True
+        except Exception:
+            await log(f"WARNING: Failed to edit player message: {traceback.format_exc()}")
+            return False
+
     async def start_playback(self, ctx, voice_client, player: MediaPlayer):
         view = playerView(timeout=36000)
-        msg = await ctx.send(
-            embed=discord.Embed(title="**Проигрывание сейчас начнется**"),
-            view=view,
-        )
+        msg = None
 
-        while await player.has_pending_tracks():
-            song, _ = await player.get_next_song()
-            if not song:
+        try:
+            msg = await self._send_player_message(
+                ctx,
+                embed=discord.Embed(title="**Проигрывание сейчас начнется**"),
+                view=view,
+            )
+        except Exception:
+            await log(f"WARNING: Failed to send player message: {traceback.format_exc()}")
+
+        while True:
+            if not await player.has_pending_tracks():
+                if self._is_voice_active(voice_client):
+                    await asyncio.sleep(1)
+                    continue
                 break
 
+            song, _ = await player.get_next_song()
+            if not song:
+                await asyncio.sleep(1)
+                continue
+
+            song_url = song.get("url")
+            if not song_url:
+                continue
+
             try:
-                song_url = song.get("url")
-                if not song_url:
-                    continue
-
                 info = await asyncio.to_thread(self.fetch_track, song_url)
-                if info is None:
-                    continue
+            except Exception:
+                await log(f"ERROR: Failed to fetch track info: {traceback.format_exc()}")
+                continue
 
-                stream_url = info.get("url")
-                if not stream_url:
-                    await log(f"WARNING: Missing stream URL for track: {song_url}")
-                    continue
+            if info is None:
+                continue
 
-                title = info.get("title") or MediaPlayer.get_track_title(song)
-                await player.set_current_track_title(title)
+            stream_url = info.get("url")
+            if not stream_url:
+                await log(f"WARNING: Missing stream URL for track: {song_url}")
+                continue
 
+            title = info.get("title") or MediaPlayer.get_track_title(song)
+            await player.set_current_track_title(title)
+
+            try:
                 voice_client.play(discord.FFmpegPCMAudio(stream_url, **self.ffmpeg_options))
+            except Exception:
+                await log(f"ERROR: Failed to start playback: {traceback.format_exc()}")
+                continue
 
-                last_snapshot = await player.get_status_snapshot()
-                await msg.edit(
+            last_snapshot = await player.get_status_snapshot()
+            if msg is not None:
+                ok = await self._safe_edit_player_message(
+                    msg,
                     embed=self._build_now_playing_embed(*last_snapshot),
                     view=view,
                 )
+                if not ok:
+                    msg = None
 
-                while voice_client.is_playing() or voice_client.is_paused():
-                    snapshot = await player.get_status_snapshot()
-                    if snapshot != last_snapshot:
-                        await msg.edit(
-                            embed=self._build_now_playing_embed(*snapshot),
-                            view=view,
-                        )
+            while self._is_voice_active(voice_client):
+                snapshot = await player.get_status_snapshot()
+                if msg is not None and snapshot != last_snapshot:
+                    ok = await self._safe_edit_player_message(
+                        msg,
+                        embed=self._build_now_playing_embed(*snapshot),
+                        view=view,
+                    )
+                    if ok:
                         last_snapshot = snapshot
+                    else:
+                        msg = None
 
-                    if view.response != "":
+                if view.response != "":
+                    try:
                         await self.handle_view_response(view, player, voice_client)
-                        await msg.edit(view=view)
+                    except Exception:
+                        await log(f"ERROR: Failed to handle player action: {traceback.format_exc()}")
+                    finally:
+                        if msg is not None:
+                            ok = await self._safe_edit_player_message(msg, view=view)
+                            if not ok:
+                                msg = None
                         view.response = ""
 
-                    await asyncio.sleep(1)
+                await asyncio.sleep(1)
 
-            except Exception:
-                await log(f"ERROR: {traceback.format_exc()}")
-                if view.response != "":
-                    await self.handle_view_response(view, player, voice_client)
-                    view.response = ""
-                await msg.edit(
-                    embed=discord.Embed(
-                        title=f"**Произошла ошибка при воспроизведении,{traceback.format_exc()}**",
-                        color=0xFF0000,
-                    ),
-                    view=view)
-                    # ctx.send("Произошла ошибка при воспроизведении.")
-        else:
-            await player.delete_all_tracks()
-            if voice_client.is_playing() or voice_client.is_paused():
-                voice_client.stop()
+        await player.delete_all_tracks()
+        if self._is_voice_active(voice_client):
+            voice_client.stop()
+        if self._is_voice_connected(voice_client):
             await voice_client.disconnect()

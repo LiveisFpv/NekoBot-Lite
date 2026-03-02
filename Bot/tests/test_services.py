@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -141,6 +141,83 @@ class DummyView:
         self.response = response
 
 
+class DummyPlayerView:
+    def __init__(self, timeout=None):
+        self.timeout = timeout
+        self.response = ""
+
+
+class DummyMessage:
+    def __init__(self, fail_first_edit=False):
+        self.fail_first_edit = fail_first_edit
+        self.edit_calls = 0
+
+    async def edit(self, **kwargs):
+        self.edit_calls += 1
+        if self.fail_first_edit and self.edit_calls == 1:
+            raise RuntimeError("message edit failed")
+
+
+class DummyChannel:
+    def __init__(self, message):
+        self.message = message
+        self.send_calls = 0
+
+    async def send(self, **kwargs):
+        self.send_calls += 1
+        return self.message
+
+
+class DummyContext:
+    def __init__(self, channel):
+        self.channel = channel
+        self.send_called = False
+
+    async def send(self, *args, **kwargs):
+        self.send_called = True
+        raise RuntimeError("ctx.send should not be used when channel is available")
+
+
+class DummyPlaybackVoiceClient:
+    def __init__(self, playing_checks=2):
+        self._playing = False
+        self._paused = False
+        self._remaining_checks = playing_checks
+        self.play_called = False
+        self.stop_called = False
+        self.disconnected = False
+
+    def play(self, source):
+        self.play_called = True
+        self._playing = True
+        self._paused = False
+
+    def is_playing(self):
+        if not self._playing:
+            return False
+        if self._remaining_checks <= 0:
+            self._playing = False
+            return False
+        self._remaining_checks -= 1
+        return True
+
+    def is_paused(self):
+        return self._paused
+
+    def stop(self):
+        self.stop_called = True
+        self._playing = False
+        self._paused = False
+
+    async def disconnect(self):
+        self.disconnected = True
+        self._playing = False
+        self._paused = False
+
+    def is_connected(self):
+        return not self.disconnected
+
+
 @pytest.mark.asyncio
 async def test_media_playback_service_download_playlist():
     service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
@@ -264,3 +341,58 @@ async def test_media_player_status_snapshot_updates_on_queue_change():
     assert current_title == "Song A"
     assert next_title == "Song B"
     assert queue_size == 1
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_start_playback_uses_channel_send():
+    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
+    player = MediaPlayer()
+    await player.add_to_queue("https://example.com/track", title="Track")
+
+    message = DummyMessage()
+    channel = DummyChannel(message)
+    ctx = DummyContext(channel)
+    voice = DummyPlaybackVoiceClient(playing_checks=1)
+
+    with (
+        patch("services.mediaPlaybackService.playerView", DummyPlayerView),
+        patch("services.mediaPlaybackService.discord.FFmpegPCMAudio", return_value=MagicMock()),
+        patch(
+            "services.mediaPlaybackService.asyncio.to_thread",
+            new=AsyncMock(return_value={"url": "stream-url", "title": "Track"}),
+        ),
+        patch("services.mediaPlaybackService.asyncio.sleep", new=AsyncMock()),
+    ):
+        await service.start_playback(ctx, voice, player)
+
+    assert channel.send_calls == 1
+    assert ctx.send_called is False
+    assert voice.play_called is True
+    assert voice.disconnected is True
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_start_playback_survives_edit_error():
+    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
+    player = MediaPlayer()
+    await player.add_to_queue("https://example.com/track", title="Track")
+
+    message = DummyMessage(fail_first_edit=True)
+    channel = DummyChannel(message)
+    ctx = DummyContext(channel)
+    voice = DummyPlaybackVoiceClient(playing_checks=2)
+
+    with (
+        patch("services.mediaPlaybackService.playerView", DummyPlayerView),
+        patch("services.mediaPlaybackService.discord.FFmpegPCMAudio", return_value=MagicMock()),
+        patch(
+            "services.mediaPlaybackService.asyncio.to_thread",
+            new=AsyncMock(return_value={"url": "stream-url", "title": "Track"}),
+        ),
+        patch("services.mediaPlaybackService.asyncio.sleep", new=AsyncMock()),
+    ):
+        await service.start_playback(ctx, voice, player)
+
+    assert voice.play_called is True
+    assert voice.stop_called is False
+    assert voice.disconnected is True
