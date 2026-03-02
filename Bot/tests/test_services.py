@@ -182,6 +182,23 @@ async def test_media_playback_service_handle_view_response_controls():
 
 
 @pytest.mark.asyncio
+async def test_media_playback_service_handle_view_response_shuffle():
+    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
+    player = MediaPlayer()
+    voice = DummyVoiceClient(playing=False, paused=False)
+
+    await player.add_to_queue("track-a", title="A")
+    await player.add_to_queue("track-b", title="B")
+    await player.add_to_queue("track-c", title="C")
+
+    with patch("services.mediaService.random.shuffle", side_effect=lambda items: items.reverse()):
+        await service.handle_view_response(DummyView("shuffle"), player, voice)
+
+    first, _ = await player.get_next_song()
+    assert first["url"] == "track-c"
+
+
+@pytest.mark.asyncio
 async def test_media_playback_service_handle_view_response_back():
     service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
     player = MediaPlayer()

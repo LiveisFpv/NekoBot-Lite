@@ -115,6 +115,8 @@ class MediaPlaybackService:
             previous_track = await player.get_previous_song()
             if previous_track and (voice_client.is_playing() or voice_client.is_paused()):
                 voice_client.stop()
+        elif view.response == "shuffle":
+            await player.shuffle_queue()
 
     @staticmethod
     def _build_now_playing_embed(title: str, next_title: str, queue_size: int):

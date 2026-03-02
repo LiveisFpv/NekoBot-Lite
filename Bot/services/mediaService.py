@@ -1,5 +1,6 @@
 import asyncio
 from collections import deque
+import random
 
 from utils.utils import log
 
@@ -95,3 +96,12 @@ class MediaPlayer:
             self.current_track = None
             self._queue.appendleft(previous_track)
             return previous_track
+
+    async def shuffle_queue(self) -> bool:
+        async with self._lock:
+            if len(self._queue) < 2:
+                return False
+            items = list(self._queue)
+            random.shuffle(items)
+            self._queue = deque(items)
+            return True
