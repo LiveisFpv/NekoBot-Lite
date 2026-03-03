@@ -6,7 +6,7 @@ asyncpraw
 discord-components
 googletrans==3.1.0a0
 requests.api
-yt-dlp
+wavelink==3.4.1
 PyNaCl
 ffmpeg
 pillow

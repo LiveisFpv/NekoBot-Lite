@@ -1,7 +1,8 @@
 import json
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -9,6 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from services.animeService import AnimeService
 from services.generalService import GeneralService
+from services.lavalinkService import LavalinkService
 from services.mediaPlaybackService import MediaPlaybackService
 from services.mediaService import MediaPlayer
 from services.memeService import MemeService
@@ -102,297 +104,362 @@ async def test_meme_service_translate_to_ru():
     assert result == "привет"
 
 
-class DummyVoiceClient:
-    def __init__(self, playing=False, paused=False):
-        self._playing = playing
-        self._paused = paused
-        self.stop_called = False
-        self.pause_called = False
-        self.resume_called = False
-        self.disconnected = False
+class DummyTrack:
+    def __init__(self, title: str, uri: str = "https://example.com", length: int = 180000):
+        self.title = title
+        self.uri = uri
+        self.length = length
 
-    def is_playing(self):
-        return self._playing
 
-    def is_paused(self):
-        return self._paused
+class DummyPlaylist:
+    def __init__(self, name: str, tracks):
+        self.name = name
+        self.tracks = list(tracks)
 
-    def stop(self):
-        self.stop_called = True
-        self._playing = False
-        self._paused = False
+    def __iter__(self):
+        return iter(self.tracks)
 
-    def pause(self):
-        self.pause_called = True
-        self._playing = False
-        self._paused = True
 
-    def resume(self):
-        self.resume_called = True
-        self._playing = True
-        self._paused = False
+class DummyQueue:
+    def __init__(self):
+        self._items = []
+        self.mode = None
+
+    def put(self, item):
+        if isinstance(item, DummyPlaylist):
+            self._items.extend(item.tracks)
+            return len(item.tracks)
+        if isinstance(item, list):
+            self._items.extend(item)
+            return len(item)
+        self._items.append(item)
+        return 1
+
+    def get(self):
+        if not self._items:
+            raise RuntimeError("queue is empty")
+        return self._items.pop(0)
+
+    def put_at(self, index: int, value):
+        self._items.insert(index, value)
+
+    def clear(self):
+        self._items.clear()
+
+    def __len__(self):
+        return len(self._items)
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __bool__(self):
+        return bool(self._items)
+
+
+class DummyPlayer:
+    def __init__(self):
+        self.queue = DummyQueue()
+        self.current = None
+        self.playing = False
+        self.paused = False
+        self.connected = True
+        self.position = 0
+        self.play_calls = []
+        self.skip_calls = 0
+
+    async def play(self, track, **kwargs):
+        self.current = track
+        self.playing = True
+        self.paused = False
+        self.play_calls.append((track, kwargs))
+
+    async def pause(self, value: bool):
+        self.paused = value
+        self.playing = not value
+
+    async def skip(self, force=True):
+        self.skip_calls += 1
+        self.current = None
+        self.playing = False
+        self.paused = False
 
     async def disconnect(self):
-        self.disconnected = True
-
-
-class DummyView:
-    def __init__(self, response):
-        self.response = response
-
-
-class DummyPlayerView:
-    def __init__(self, timeout=None):
-        self.timeout = timeout
-        self.response = ""
+        self.connected = False
 
 
 class DummyMessage:
-    def __init__(self, fail_first_edit=False):
-        self.fail_first_edit = fail_first_edit
-        self.edit_calls = 0
+    def __init__(self, message_id: int):
+        self.id = message_id
+        self.last_embed = None
+        self.last_view = None
+        self.edits = 0
 
     async def edit(self, **kwargs):
-        self.edit_calls += 1
-        if self.fail_first_edit and self.edit_calls == 1:
-            raise RuntimeError("message edit failed")
+        self.last_embed = kwargs.get("embed")
+        self.last_view = kwargs.get("view")
+        self.edits += 1
 
 
 class DummyChannel:
-    def __init__(self, message):
-        self.message = message
-        self.send_calls = 0
+    def __init__(self):
+        self.messages = {}
+        self.sent_count = 0
+
+    async def fetch_message(self, message_id: int):
+        if message_id not in self.messages:
+            raise RuntimeError("message not found")
+        return self.messages[message_id]
 
     async def send(self, **kwargs):
-        self.send_calls += 1
-        return self.message
+        self.sent_count += 1
+        message = DummyMessage(100 + self.sent_count)
+        message.last_embed = kwargs.get("embed")
+        message.last_view = kwargs.get("view")
+        self.messages[message.id] = message
+        return message
 
 
-class DummyContext:
+class DummyBot:
     def __init__(self, channel):
         self.channel = channel
-        self.send_called = False
 
-    async def send(self, *args, **kwargs):
-        self.send_called = True
-        raise RuntimeError("ctx.send should not be used when channel is available")
+    def get_channel(self, channel_id: int):
+        return self.channel if channel_id == 123 else None
 
 
-class DummyPlaybackVoiceClient:
-    def __init__(self, playing_checks=2):
-        self._playing = False
-        self._paused = False
-        self._remaining_checks = playing_checks
-        self.play_called = False
-        self.stop_called = False
-        self.disconnected = False
+class DummyWavelink:
+    Playlist = DummyPlaylist
 
-    def play(self, source):
-        self.play_called = True
-        self._playing = True
-        self._paused = False
+    class TrackSource:
+        YouTubeMusic = "youtube_music"
 
-    def is_playing(self):
-        if not self._playing:
-            return False
-        if self._remaining_checks <= 0:
-            self._playing = False
-            return False
-        self._remaining_checks -= 1
-        return True
-
-    def is_paused(self):
-        return self._paused
-
-    def stop(self):
-        self.stop_called = True
-        self._playing = False
-        self._paused = False
-
-    async def disconnect(self):
-        self.disconnected = True
-        self._playing = False
-        self._paused = False
-
-    def is_connected(self):
-        return not self.disconnected
+    class QueueMode:
+        normal = "normal"
+        loop = "loop"
+        loop_all = "loop_all"
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_download_playlist():
-    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
-    player = MediaPlayer()
+async def test_media_player_previous_song_history():
+    state = MediaPlayer()
+    track_a = DummyTrack("A")
+    track_b = DummyTrack("B")
 
-    with patch.object(
-        MediaPlaybackService,
-        "fetch_playlist",
-        return_value={"entries": [{"url": "a"}, {"url": "b"}]},
-    ):
-        await service.download_playlist(player, "playlist-url")
+    await state.push_history(track_a)
+    await state.push_history(track_b)
 
-    first, _ = await player.get_next_song()
-    second, _ = await player.get_next_song()
-    assert first["url"] == "a"
-    assert second["url"] == "b"
+    previous, current = await state.get_previous_song()
+    assert previous.title == "A"
+    assert current.title == "B"
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_handle_view_response_controls():
-    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
-    player = MediaPlayer()
-    voice = DummyVoiceClient(playing=True, paused=False)
+async def test_media_player_status_snapshot():
+    state = MediaPlayer()
+    current = DummyTrack("Now")
+    queue = DummyQueue()
+    queue.put(DummyTrack("Next"))
 
-    await service.handle_view_response(DummyView("play"), player, voice)
-    assert voice.pause_called is True
-
-    await service.handle_view_response(DummyView("play"), player, voice)
-    assert voice.resume_called is True
-
-    await service.handle_view_response(DummyView("loop"), player, voice)
-    assert player.loop_playlist is True
-
-    await service.handle_view_response(DummyView("loop1"), player, voice)
-    assert player.loop is True
-
-    await service.handle_view_response(DummyView("skip"), player, voice)
-    assert voice.stop_called is True
-
-
-@pytest.mark.asyncio
-async def test_media_playback_service_handle_view_response_shuffle():
-    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
-    player = MediaPlayer()
-    voice = DummyVoiceClient(playing=False, paused=False)
-
-    await player.add_to_queue("track-a", title="A")
-    await player.add_to_queue("track-b", title="B")
-    await player.add_to_queue("track-c", title="C")
-
-    with patch("services.mediaService.random.shuffle", side_effect=lambda items: items.reverse()):
-        await service.handle_view_response(DummyView("shuffle"), player, voice)
-
-    first, _ = await player.get_next_song()
-    assert first["url"] == "track-c"
-
-
-@pytest.mark.asyncio
-async def test_media_playback_service_handle_view_response_back():
-    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
-    player = MediaPlayer()
-    voice = DummyVoiceClient(playing=True, paused=False)
-
-    await player.add_to_queue("track-a", title="A")
-    await player.add_to_queue("track-b", title="B")
-    await player.get_next_song()  # A starts playing
-    await player.get_next_song()  # B starts playing
-
-    await service.handle_view_response(DummyView("back"), player, voice)
-    assert voice.stop_called is True
-
-    previous, _ = await player.get_next_song()
-    assert previous["url"] == "track-a"
-
-
-@pytest.mark.asyncio
-async def test_media_playback_service_resolve_track_input_with_url():
-    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
-
-    resolved_url, title = await service.resolve_track_input("https://example.com/track")
-
-    assert resolved_url == "https://example.com/track"
-    assert title is None
-
-
-@pytest.mark.asyncio
-async def test_media_playback_service_resolve_track_input_with_query():
-    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
-
-    with patch.object(
-        MediaPlaybackService,
-        "fetch_search_track",
-        return_value={
-            "entries": [
-                {
-                    "webpage_url": "https://www.youtube.com/watch?v=abc123",
-                    "title": "Found song",
-                }
-            ]
-        },
-    ):
-        resolved_url, title = await service.resolve_track_input("found song query")
-
-    assert resolved_url == "https://www.youtube.com/watch?v=abc123"
-    assert title == "Found song"
-
-
-@pytest.mark.asyncio
-async def test_media_player_status_snapshot_updates_on_queue_change():
-    player = MediaPlayer()
-    await player.add_to_queue("track-a", title="Song A")
-    await player.get_next_song()
-
-    current_title, next_title, queue_size = await player.get_status_snapshot()
-    assert current_title == "Song A"
-    assert next_title == "end of playlist"
-    assert queue_size == 0
-
-    await player.add_to_queue("track-b", title="Song B")
-    current_title, next_title, queue_size = await player.get_status_snapshot()
-    assert current_title == "Song A"
-    assert next_title == "Song B"
+    current_title, next_title, queue_size = await state.get_status_snapshot(current, queue)
+    assert current_title == "Now"
+    assert next_title == "Next"
     assert queue_size == 1
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_start_playback_uses_channel_send():
-    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
-    player = MediaPlayer()
-    await player.add_to_queue("https://example.com/track", title="Track")
+async def test_media_playback_service_enqueue_playlist(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
 
-    message = DummyMessage()
-    channel = DummyChannel(message)
-    ctx = DummyContext(channel)
-    voice = DummyPlaybackVoiceClient(playing_checks=1)
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
 
-    with (
-        patch("services.mediaPlaybackService.playerView", DummyPlayerView),
-        patch("services.mediaPlaybackService.discord.FFmpegPCMAudio", return_value=MagicMock()),
-        patch(
-            "services.mediaPlaybackService.asyncio.to_thread",
-            new=AsyncMock(return_value={"url": "stream-url", "title": "Track"}),
-        ),
-        patch("services.mediaPlaybackService.asyncio.sleep", new=AsyncMock()),
-    ):
-        await service.start_playback(ctx, voice, player)
+    playlist = DummyPlaylist("Mix", [DummyTrack("A"), DummyTrack("B")])
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=playlist))
 
-    assert channel.send_calls == 1
-    assert ctx.send_called is False
-    assert voice.play_called is True
-    assert voice.disconnected is True
+    result = await service.enqueue_query(player, "playlist query")
+
+    assert result["is_playlist"] is True
+    assert result["added"] == 2
+    assert len(player.queue) == 2
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_start_playback_survives_edit_error():
-    service = MediaPlaybackService(ydl_opts={}, ydl_opts_meta={}, ffmpeg_options={})
-    player = MediaPlayer()
-    await player.add_to_queue("https://example.com/track", title="Track")
+async def test_media_playback_service_enqueue_single_track(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
 
-    message = DummyMessage(fail_first_edit=True)
-    channel = DummyChannel(message)
-    ctx = DummyContext(channel)
-    voice = DummyPlaybackVoiceClient(playing_checks=2)
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=[DummyTrack("Song")]))
 
-    with (
-        patch("services.mediaPlaybackService.playerView", DummyPlayerView),
-        patch("services.mediaPlaybackService.discord.FFmpegPCMAudio", return_value=MagicMock()),
-        patch(
-            "services.mediaPlaybackService.asyncio.to_thread",
-            new=AsyncMock(return_value={"url": "stream-url", "title": "Track"}),
-        ),
-        patch("services.mediaPlaybackService.asyncio.sleep", new=AsyncMock()),
-    ):
-        await service.start_playback(ctx, voice, player)
+    result = await service.enqueue_query(player, "song query")
 
-    assert voice.play_called is True
-    assert voice.stop_called is False
-    assert voice.disconnected is True
+    assert result["is_playlist"] is False
+    assert result["added"] == 1
+    assert result["title"] == "Song"
+
+
+def test_media_playback_service_normalize_youtube_playlist_url():
+    service = MediaPlaybackService()
+    normalized = service.normalize_query(
+        "https://youtube.com/playlist?list=PL1234567890&si=abc123"
+    )
+    assert normalized == "https://www.youtube.com/playlist?list=PL1234567890"
+
+
+def test_media_playback_service_normalize_youtu_be_url():
+    service = MediaPlaybackService()
+    normalized = service.normalize_query("https://youtu.be/abcDEF12345?si=zzz")
+    assert normalized == "https://www.youtube.com/watch?v=abcDEF12345"
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_start_if_idle_starts_track():
+    service = MediaPlaybackService(default_volume=55)
+    player = DummyPlayer()
+    player.queue.put(DummyTrack("A"))
+
+    started = await service.start_if_idle(player)
+
+    assert started is True
+    assert player.current.title == "A"
+    assert player.play_calls[0][1]["volume"] == 55
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_skip_to_next_only_skips_current():
+    service = MediaPlaybackService(default_volume=55)
+    player = DummyPlayer()
+    player.current = DummyTrack("Current")
+    player.playing = True
+    player.queue.put(DummyTrack("Next"))
+
+    skipped = await service.skip_to_next(player)
+
+    assert skipped is True
+    assert player.skip_calls == 1
+    # Wavelink autoplay handles next track; service should not manually call play here.
+    assert player.play_calls == []
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_apply_queue_mode(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    state = MediaPlayer()
+
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+
+    await state.set_loop_flags(loop=True)
+    await service.apply_queue_mode(player, state)
+    assert player.queue.mode == DummyWavelink.QueueMode.loop
+
+    await state.set_loop_flags(loop=False, loop_playlist=True)
+    await service.apply_queue_mode(player, state)
+    assert player.queue.mode == DummyWavelink.QueueMode.loop_all
+
+    await state.set_loop_flags(loop=False, loop_playlist=False)
+    await service.apply_queue_mode(player, state)
+    assert player.queue.mode == DummyWavelink.QueueMode.normal
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_back_button_plays_previous():
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    state = MediaPlayer()
+
+    track_a = DummyTrack("A")
+    track_b = DummyTrack("B")
+
+    await state.push_history(track_a)
+    await state.push_history(track_b)
+
+    moved = await service.go_back(player, state)
+
+    assert moved is True
+    assert player.current.title == "A"
+    assert len(player.queue) == 1
+    assert list(player.queue)[0].title == "B"
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_publish_now_playing_updates_existing(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    player.current = DummyTrack("Now")
+    player.queue.put(DummyTrack("Next"))
+
+    state = MediaPlayer()
+    await state.set_controller_message(123, 777)
+
+    channel = DummyChannel()
+    existing = DummyMessage(777)
+    channel.messages[777] = existing
+    bot = DummyBot(channel)
+
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+
+    await service.publish_now_playing(
+        bot,
+        1,
+        player,
+        state,
+        action_handler=lambda action, interaction, view: None,
+    )
+
+    assert existing.edits == 1
+    assert channel.sent_count == 0
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_publish_now_playing_sends_new_message(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    player.current = DummyTrack("Now")
+
+    state = MediaPlayer()
+    await state.set_controller_message(123, None)
+
+    channel = DummyChannel()
+    bot = DummyBot(channel)
+
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+
+    await service.publish_now_playing(
+        bot,
+        1,
+        player,
+        state,
+        action_handler=lambda action, interaction, view: None,
+    )
+
+    _, message_id = await state.get_controller_message()
+    assert channel.sent_count == 1
+    assert message_id is not None
+
+
+def test_lavalink_service_from_env(monkeypatch):
+    monkeypatch.setenv("LAVALINK_HOST", "localhost")
+    monkeypatch.setenv("LAVALINK_PORT", "2444")
+    monkeypatch.setenv("LAVALINK_PASSWORD", "secret")
+    monkeypatch.setenv("LAVALINK_SECURE", "true")
+
+    service = LavalinkService.from_env()
+
+    assert service.host == "localhost"
+    assert service.port == 2444
+    assert service.password == "secret"
+    assert service.secure is True
+    assert service.uri == "https://localhost:2444"
+
+
+@pytest.mark.asyncio
+async def test_lavalink_service_ensure_connected_uses_existing_nodes(monkeypatch):
+    service = LavalinkService(host="lavalink", port=2333, password="pass", secure=False)
+
+    fake_wavelink = SimpleNamespace(Pool=SimpleNamespace(nodes={"main": object()}))
+    monkeypatch.setattr("services.lavalinkService.wavelink", fake_wavelink)
+
+    connected = await service.ensure_connected(object())
+
+    assert connected is True

@@ -1,107 +1,132 @@
 import asyncio
-from collections import deque
 import random
-
-from utils.utils import log
+from collections import deque
+from typing import Any
 
 
 class MediaPlayer:
     def __init__(self):
-        self._queue = deque()
         self._history = deque()
-        self.current_track = None
         self.loop = False
         self.loop_playlist = False
+        self.controller_channel_id: int | None = None
+        self.controller_message_id: int | None = None
         self._lock = asyncio.Lock()
 
     @staticmethod
-    def _make_track(url: str, title: str | None = None):
-        return {"url": url, "title": title}
-
-    @staticmethod
-    def get_track_title(track):
+    def get_track_title(track: Any) -> str:
         if not track:
             return "end of playlist"
-        return track.get("title") or track.get("url") or "unknown"
 
-    async def add_to_queue(self, url: str, title: str | None = None):
-        if not url:
+        title = getattr(track, "title", None)
+        if title:
+            return str(title)
+
+        uri = getattr(track, "uri", None)
+        if uri:
+            return str(uri)
+
+        identifier = getattr(track, "identifier", None)
+        if identifier:
+            return str(identifier)
+
+        return "unknown"
+
+    @staticmethod
+    def format_duration(milliseconds: int | None) -> str:
+        if not milliseconds or milliseconds <= 0:
+            return "00:00"
+
+        seconds = int(milliseconds // 1000)
+        minutes, sec = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+
+        if hours > 0:
+            return f"{hours:02}:{minutes:02}:{sec:02}"
+        return f"{minutes:02}:{sec:02}"
+
+    async def push_history(self, track: Any):
+        if track is None:
             return
-        track = self._make_track(url, title)
         async with self._lock:
-            self._queue.append(track)
-        await log(f"INFO: Added to queue: {track['url']}")
-
-    async def queue_size(self) -> int:
-        async with self._lock:
-            return len(self._queue)
-
-    async def has_pending_tracks(self) -> bool:
-        async with self._lock:
-            return bool(self._queue) or (self.loop and self.current_track is not None)
-
-    async def peek_next_song(self):
-        async with self._lock:
-            return self._queue[0] if self._queue else None
-
-    async def set_current_track_title(self, title: str):
-        if not title:
-            return
-        async with self._lock:
-            if self.current_track is not None:
-                self.current_track["title"] = title
-
-    async def get_status_snapshot(self):
-        async with self._lock:
-            current_title = self.get_track_title(self.current_track)
-            next_track = self._queue[0] if self._queue else None
-            next_title = self.get_track_title(next_track)
-            queue_size = len(self._queue)
-            return current_title, next_title, queue_size
-
-    async def get_next_song(self):
-        async with self._lock:
-            if self.loop and self.current_track is not None:
-                next_track = self._queue[0] if self._queue else None
-                return self.current_track, next_track
-
-            if self.current_track is not None:
-                self._history.append(self.current_track)
-                if self.loop_playlist:
-                    self._queue.append(self.current_track)
-
-            if not self._queue:
-                self.current_track = None
-                return None, None
-
-            self.current_track = self._queue.popleft()
-            next_track = self._queue[0] if self._queue else None
-            return self.current_track, next_track
-
-    async def delete_all_tracks(self):
-        async with self._lock:
-            self._queue.clear()
-            self._history.clear()
-            self.current_track = None
+            self._history.append(track)
 
     async def get_previous_song(self):
         async with self._lock:
-            if not self._history:
-                return None
+            if len(self._history) < 2:
+                return None, None
 
+            current_track = self._history.pop()
             previous_track = self._history.pop()
-            if self.current_track is not None:
-                self._queue.appendleft(self.current_track)
+            return previous_track, current_track
 
-            self.current_track = None
-            self._queue.appendleft(previous_track)
-            return previous_track
-
-    async def shuffle_queue(self) -> bool:
+    async def get_history_size(self) -> int:
         async with self._lock:
-            if len(self._queue) < 2:
-                return False
-            items = list(self._queue)
-            random.shuffle(items)
-            self._queue = deque(items)
-            return True
+            return len(self._history)
+
+    async def shuffle_queue(self, queue) -> bool:
+        items = list(queue)
+        if len(items) < 2:
+            return False
+
+        random.shuffle(items)
+        queue.clear()
+        queue.put(items)
+        return True
+
+    async def set_controller_message(self, channel_id: int | None, message_id: int | None):
+        async with self._lock:
+            self.controller_channel_id = channel_id
+            self.controller_message_id = message_id
+
+    async def get_controller_message(self):
+        async with self._lock:
+            return self.controller_channel_id, self.controller_message_id
+
+    async def clear_controller_message(self):
+        async with self._lock:
+            self.controller_channel_id = None
+            self.controller_message_id = None
+
+    async def set_output_channel(self, channel_id: int | None):
+        async with self._lock:
+            self.controller_channel_id = channel_id
+
+    async def get_output_channel(self) -> int | None:
+        async with self._lock:
+            return self.controller_channel_id
+
+    async def set_loop_flags(self, loop: bool | None = None, loop_playlist: bool | None = None):
+        async with self._lock:
+            if loop is not None:
+                self.loop = loop
+                if loop:
+                    self.loop_playlist = False
+            if loop_playlist is not None:
+                self.loop_playlist = loop_playlist
+                if loop_playlist:
+                    self.loop = False
+
+    async def get_loop_flags(self):
+        async with self._lock:
+            return self.loop, self.loop_playlist
+
+    async def reset(self, queue=None):
+        async with self._lock:
+            self._history.clear()
+            self.loop = False
+            self.loop_playlist = False
+            self.controller_message_id = None
+            # Keep channel id to allow follow-up messages in same channel.
+        if queue is not None:
+            queue.clear()
+
+    async def get_status_snapshot(self, current_track, queue):
+        queue_items = list(queue)
+        next_track = queue_items[0] if queue_items else None
+
+        current_title = self.get_track_title(current_track)
+        next_title = self.get_track_title(next_track)
+        queue_size = len(queue_items)
+
+        return current_title, next_title, queue_size

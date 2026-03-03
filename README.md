@@ -4,32 +4,31 @@ Discord bot on Python with commands for memes, Reddit, anime search, and music p
 
 ## Current Status
 
-- Refactor to service-based architecture is in progress and already used in core command groups.
-- Latest in-project update note: (see `Bot/md/update.md`).
+- Service-based architecture is used in command groups.
+- Music playback migrated to Lavalink/Wavelink for low-gap track transitions.
 
 ## Tech Stack
 
 - Python 3.12
 - `discord.py`
-- `yt-dlp` + `ffmpeg` for music playback
+- `wavelink` + Lavalink v4 for music playback
 - `aiohttp` for async HTTP requests
 - `asyncpraw` for Reddit API
 
 ## Architecture
-
-The project is organized as a monolith:
 
 - Entry point and bootstrap:
   - `Bot/main.py`
 - Discord adapter layer (commands/events):
   - `Bot/Commands/*.py`
   - `Bot/Events/*.py`
-- Service layer (business logic):
+- Service layer:
   - `Bot/services/httpService.py`
   - `Bot/services/generalService.py`
   - `Bot/services/animeService.py`
   - `Bot/services/memeService.py`
   - `Bot/services/redditService.py`
+  - `Bot/services/lavalinkService.py`
   - `Bot/services/mediaService.py`
   - `Bot/services/mediaPlaybackService.py`
 - UI components for Discord interactions:
@@ -41,15 +40,14 @@ The project is organized as a monolith:
 ## Development Status
 
 - Core command groups are migrated to services.
-- Media playback is split into queue/state and playback orchestration services.
+- Media playback uses Lavalink queue/events instead of `yt-dlp` polling loops.
+- `%play` and `/play` are both supported in a shared implementation.
 - Extension loading and startup flow are centralized in `Bot/main.py`.
-- Test suite is green in CI (`pytest Bot/tests`).
 
 ## Roadmap
 
 - Spotify integration for music commands (search/import/play flow).
-- Migration from prefix-only commands to Discord application commands (slash commands).
-- Bot command catalog improvements so commands are visible in Discord command UI and bot profile.
+- Additional command catalog improvements in Discord UI and bot profile.
 
 ## Available Commands (Default prefix: `%`)
 
@@ -83,7 +81,7 @@ Reddit:
 
 Music:
 
-- `%play <url>`
+- `%play <url or search query>`
 - `%pause`
 - `%resume`
 - `%skip`
@@ -95,25 +93,42 @@ Game:
 
 ## Environment Variables
 
+Core:
+
 - `DISCORD_TOKEN` (or `BOT_TOKEN` / `TOKEN`)
 - `BOT_PREFIX` (default: `%`)
 - `DISCORD_BOT_NAME`
 - `DISCORD_BOT_ID`
+
+Reddit:
+
 - `REDDIT_CLIENT_ID`
 - `REDDIT_CLIENT_SECRET`
 - `REDDIT_USER_AGENT`
-- `YTDLP_REMOTE_COMPONENTS` (default: `ejs:github`)
-- `YTDLP_CACHE_DIR`
+
+Spotify (planned):
+
+- `SPOTIFY_CLIENT_ID`
+- `SPOTIFY_CLIENT_SECRET`
+
+Lavalink/Wavelink:
+
+- `LAVALINK_HOST` (default: `lavalink`)
+- `LAVALINK_PORT` (default: `2333`)
+- `LAVALINK_PASSWORD` (default: `youshallnotpass`)
+- `LAVALINK_SECURE` (default: `false`)
+- `PLAYER_DEFAULT_VOLUME` (default: `100`)
 
 ## Docker Run
 
-`docker-compose.yml` is ready for running the bot container:
+Start bot + Lavalink:
 
 ```bash
 docker compose up -d --build
 ```
 
 Pass required env vars through shell or `.env` file (`DISCORD_TOKEN` is mandatory).
+You can start from `.env.example`.
 
 ## Tests
 
