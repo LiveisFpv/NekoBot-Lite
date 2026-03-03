@@ -175,12 +175,6 @@ class MediaPlaybackService:
             return False
 
         await player.skip(force=True)
-        try:
-            next_track = player.queue.get()
-        except Exception:
-            return True
-
-        await player.play(next_track, volume=self.default_volume)
         return True
 
     async def go_back(self, player, state: MediaPlayer) -> bool:

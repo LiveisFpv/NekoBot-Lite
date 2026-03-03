@@ -326,6 +326,22 @@ async def test_media_playback_service_start_if_idle_starts_track():
 
 
 @pytest.mark.asyncio
+async def test_media_playback_service_skip_to_next_only_skips_current():
+    service = MediaPlaybackService(default_volume=55)
+    player = DummyPlayer()
+    player.current = DummyTrack("Current")
+    player.playing = True
+    player.queue.put(DummyTrack("Next"))
+
+    skipped = await service.skip_to_next(player)
+
+    assert skipped is True
+    assert player.skip_calls == 1
+    # Wavelink autoplay handles next track; service should not manually call play here.
+    assert player.play_calls == []
+
+
+@pytest.mark.asyncio
 async def test_media_playback_service_apply_queue_mode(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()

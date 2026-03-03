@@ -62,8 +62,50 @@ class MediaCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.players: dict[int, MediaPlayer] = {}
+        self.progress_tasks: dict[int, asyncio.Task] = {}
         self.playback_service = MediaPlaybackService(default_volume=self.DEFAULT_VOLUME)
         self.lavalink_service = LavalinkService.from_env()
+
+    def _cancel_progress_task(self, guild_id: int):
+        task = self.progress_tasks.pop(guild_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _start_progress_updater(self, guild_id: int, player, state: MediaPlayer):
+        self._cancel_progress_task(guild_id)
+        self.progress_tasks[guild_id] = asyncio.create_task(
+            self._progress_updater(guild_id, player, state)
+        )
+
+    async def _progress_updater(self, guild_id: int, player, state: MediaPlayer):
+        track_ref = player.current
+        try:
+            while True:
+                if not getattr(player, "connected", False):
+                    break
+
+                if player.current is None:
+                    break
+
+                if player.current is not track_ref:
+                    break
+
+                await self.playback_service.publish_now_playing(
+                    self.bot,
+                    guild_id,
+                    player,
+                    state,
+                    self._player_action_handler,
+                )
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            await log(f"WARNING: Progress updater failed for guild={guild_id}: {exc}")
+        finally:
+            current = self.progress_tasks.get(guild_id)
+            if current is asyncio.current_task():
+                self.progress_tasks.pop(guild_id, None)
 
     async def cog_load(self):
         # Avoid hanging tests that only load extensions.
@@ -200,6 +242,8 @@ class MediaCommands(commands.Cog):
 
         state = await self.get_player_state(guild.id)
         await self.playback_service.handle_view_response(action, player, state)
+        if action == "stop":
+            self._cancel_progress_task(guild.id)
 
         if player.connected:
             await self.playback_service.publish_now_playing(
@@ -238,6 +282,14 @@ class MediaCommands(commands.Cog):
             state,
             self._player_action_handler,
         )
+        self._start_progress_updater(guild_id, player, state)
+
+    @commands.Cog.listener()
+    async def on_wavelink_track_end(self, payload):
+        player = payload.player
+        if player is None or player.guild is None:
+            return
+        self._cancel_progress_task(player.guild.id)
 
     @commands.Cog.listener()
     async def on_wavelink_track_exception(self, payload):
@@ -246,17 +298,6 @@ class MediaCommands(commands.Cog):
             return
 
         await log(f"WARNING: Track exception: {payload.exception}")
-        await self.playback_service.handle_track_exception(player)
-
-    @commands.Cog.listener()
-    async def on_wavelink_track_end(self, payload):
-        player = payload.player
-        if player is None:
-            return
-
-        if str(payload.reason) == "loadFailed":
-            await log("WARNING: Track ended with loadFailed, skipping to next track.")
-            await self.playback_service.handle_track_exception(player)
 
     @commands.hybrid_command(name="play", help="Play a song from URL or search query")
     async def play(self, ctx, *, query: str):
@@ -333,6 +374,7 @@ class MediaCommands(commands.Cog):
             return
 
         state = await self.get_player_state(ctx.guild.id)
+        self._cancel_progress_task(ctx.guild.id)
         await state.reset(queue=player.queue)
         if player.current is not None or player.playing or player.paused:
             await player.skip(force=True)
