@@ -38,11 +38,15 @@ services:
     ports:
       - "2333:2333"
     healthcheck:
-      test: ["CMD", "java", "-version"]
-      interval: 15s
+      test:
+        [
+          "CMD-SHELL",
+          "if command -v curl >/dev/null 2>&1; then curl -fsS -H \"Authorization: ${LAVALINK_PASSWORD}\" http://localhost:2333/v4/info >/dev/null; elif command -v wget >/dev/null 2>&1; then wget -q --header=\"Authorization: ${LAVALINK_PASSWORD}\" -O - http://localhost:2333/v4/info >/dev/null; else exit 1; fi",
+        ]
+      interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 20s
+      retries: 12
+      start_period: 30s
     networks:
       - intenal
 networks:
