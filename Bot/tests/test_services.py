@@ -1,6 +1,8 @@
+import asyncio
 import json
 import os
 import sys
+from collections import deque
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -14,18 +16,36 @@ from services.lavalinkService import LavalinkService
 from services.mediaPlaybackService import MediaPlaybackService
 from services.mediaService import MediaPlayer
 from services.memeService import MemeService
+from services.spotifyService import SpotifyConfigError, SpotifyService
+from Commands.media import MediaCommands, SpotifyBackfillJob
 
 
 class DummyHttpService:
-    def __init__(self, json_payload=None, text_payload=None):
+    def __init__(
+        self,
+        json_payload=None,
+        text_payload=None,
+        json_by_url: dict | None = None,
+        post_json_payload=None,
+    ):
         self.json_payload = json_payload
         self.text_payload = text_payload
+        self.json_by_url = dict(json_by_url or {})
+        self.post_json_payload = post_json_payload or {}
 
     async def get_json(self, url: str, headers=None):
+        if url in self.json_by_url:
+            payload = self.json_by_url[url]
+            if isinstance(payload, list):
+                return payload.pop(0) if payload else {}
+            return payload
         return self.json_payload
 
     async def get_text(self, url: str, headers=None) -> str:
         return self.text_payload or ""
+
+    async def post_form_json(self, url: str, data=None, headers=None):
+        return self.post_json_payload
 
 
 @pytest.mark.asyncio
@@ -295,6 +315,91 @@ async def test_media_player_track_platform_meta_roundtrip():
     assert await state.get_track_platforms(track) == ("unknown", "unknown")
 
 
+def test_spotify_service_parse_spotify_url_track_playlist_album():
+    ref_track = SpotifyService.parse_spotify_url("https://open.spotify.com/track/abc123?si=zzz")
+    ref_playlist = SpotifyService.parse_spotify_url("https://open.spotify.com/playlist/pl123")
+    ref_album = SpotifyService.parse_spotify_url("https://open.spotify.com/album/alb123")
+
+    assert ref_track.kind == "track"
+    assert ref_track.entity_id == "abc123"
+    assert ref_playlist.kind == "playlist"
+    assert ref_playlist.entity_id == "pl123"
+    assert ref_album.kind == "album"
+    assert ref_album.entity_id == "alb123"
+
+
+@pytest.mark.asyncio
+async def test_spotify_service_resolve_for_enqueue_requires_credentials():
+    service = SpotifyService(
+        http_service=DummyHttpService(
+            post_json_payload={"access_token": "token", "expires_in": 3600},
+        ),
+        client_id="",
+        client_secret="",
+    )
+
+    with pytest.raises(SpotifyConfigError):
+        await service.resolve_for_enqueue("https://open.spotify.com/track/abc123")
+
+
+@pytest.mark.asyncio
+async def test_spotify_service_resolve_playlist_returns_initial_and_deferred():
+    def _playlist_items(start: int, count: int):
+        return [
+            {
+                "track": {
+                    "name": f"Song {idx}",
+                    "artists": [{"name": f"Artist {idx}"}],
+                    "is_local": False,
+                }
+            }
+            for idx in range(start, start + count)
+        ]
+
+    playlist_id = "PL123"
+    page_0_url = (
+        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+        "?offset=0&limit=50&additional_types=track"
+    )
+    page_50_url = (
+        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+        "?offset=50&limit=50&additional_types=track"
+    )
+    http_service = DummyHttpService(
+        post_json_payload={"access_token": "token", "expires_in": 3600},
+        json_by_url={
+            f"https://api.spotify.com/v1/playlists/{playlist_id}": {"name": "My Playlist"},
+            page_0_url: {
+                "items": _playlist_items(0, 50),
+                "next": f"{page_50_url}",
+            },
+            page_50_url: {
+                "items": _playlist_items(50, 50),
+                "next": (
+                    f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+                    "?offset=100&limit=50&additional_types=track"
+                ),
+            },
+        },
+    )
+    service = SpotifyService(
+        http_service=http_service,
+        client_id="client",
+        client_secret="secret",
+    )
+
+    payload = await service.resolve_for_enqueue(
+        f"https://open.spotify.com/playlist/{playlist_id}",
+        initial_limit=100,
+    )
+
+    assert payload["kind"] == "playlist"
+    assert payload["display_title"] == "My Playlist"
+    assert len(payload["initial_queries"]) == 100
+    assert payload["initial_queries"][0] == "Artist 0 - Song 0"
+    assert payload["deferred_cursor"]["offset"] == 100
+
+
 @pytest.mark.asyncio
 async def test_media_playback_service_enqueue_playlist(monkeypatch):
     service = MediaPlaybackService()
@@ -325,6 +430,85 @@ async def test_media_playback_service_enqueue_single_track(monkeypatch):
     assert result["is_playlist"] is False
     assert result["added"] == 1
     assert result["title"] == "Song"
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_spotify_track_sets_meta(monkeypatch):
+    spotify_stub = SimpleNamespace(
+        resolve_for_enqueue=AsyncMock(
+            return_value={
+                "kind": "track",
+                "display_title": "Spotify Song",
+                "initial_queries": ["Artist - Spotify Song"],
+                "deferred_cursor": None,
+            }
+        )
+    )
+    service = MediaPlaybackService(spotify_service=spotify_stub)
+    player = DummyPlayer()
+    state = MediaPlayer()
+    matched_track = DummyTrack("Matched", uri="https://youtube.com/watch?v=abc")
+    monkeypatch.setattr(service, "search_youtube_music_track", AsyncMock(return_value=matched_track))
+
+    result = await service.enqueue_query(
+        player,
+        "https://open.spotify.com/track/123",
+        state,
+    )
+
+    assert result["added"] == 1
+    assert result["is_playlist"] is False
+    assert result["title"] == "Spotify Song"
+    assert await state.get_track_platforms(matched_track) == ("spotify", "youtube")
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_spotify_playlist_returns_deferred_and_skips_non_match(
+    monkeypatch,
+):
+    spotify_stub = SimpleNamespace(
+        resolve_for_enqueue=AsyncMock(
+            return_value={
+                "kind": "playlist",
+                "display_title": "Spotify Mix",
+                "initial_queries": ["A - One", "B - Two"],
+                "deferred_cursor": {"kind": "playlist", "entity_id": "pl1", "offset": 100},
+            }
+        )
+    )
+    service = MediaPlaybackService(spotify_service=spotify_stub)
+    player = DummyPlayer()
+    state = MediaPlayer()
+    matched_track = DummyTrack("One", uri="https://youtube.com/watch?v=one")
+    monkeypatch.setattr(
+        service,
+        "search_youtube_music_track",
+        AsyncMock(side_effect=[matched_track, None]),
+    )
+
+    result = await service.enqueue_query(
+        player,
+        "https://open.spotify.com/playlist/pl1",
+        state,
+    )
+
+    assert result["added"] == 1
+    assert result["is_playlist"] is True
+    assert result["spotify_deferred_cursor"]["offset"] == 100
+    assert result["skipped"] == 1
+    assert await state.get_track_platforms(matched_track) == ("spotify", "youtube")
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_spotify_raises_config_error():
+    spotify_stub = SimpleNamespace(
+        resolve_for_enqueue=AsyncMock(side_effect=SpotifyConfigError("missing credentials")),
+    )
+    service = MediaPlaybackService(spotify_service=spotify_stub)
+    player = DummyPlayer()
+
+    with pytest.raises(SpotifyConfigError):
+        await service.enqueue_query(player, "https://open.spotify.com/track/123")
 
 
 def test_media_playback_service_normalize_youtube_playlist_url():
@@ -718,6 +902,91 @@ async def test_media_playback_service_publish_now_playing_sends_new_message_with
     assert {item.filename for item in sent_message.attachments} == {
         "youtube-logo.png",
     }
+
+
+@pytest.mark.asyncio
+async def test_media_commands_spotify_backfill_worker_fifo_order():
+    class FakeSpotifyService:
+        def __init__(self):
+            self.data = {
+                "job1": [["q1"], ["q2"]],
+                "job2": [["q3"]],
+            }
+
+        async def fetch_deferred_queries(self, cursor, batch_size=50):
+            key = cursor["key"]
+            idx = int(cursor["idx"])
+            batch = self.data[key][idx]
+            next_idx = idx + 1
+            next_cursor = {"key": key, "idx": next_idx} if next_idx < len(self.data[key]) else None
+            return batch, next_cursor
+
+    class FakePlaybackService:
+        def __init__(self, spotify_service):
+            self.spotify_service = spotify_service
+            self.calls = []
+
+        async def enqueue_spotify_queries(self, player, queries, *, state=None, source_platform="spotify"):
+            self.calls.append((player.tag, list(queries)))
+            return {"added": len(queries), "skipped": 0}
+
+    commands = MediaCommands(SimpleNamespace())
+    fake_spotify = FakeSpotifyService()
+    fake_playback = FakePlaybackService(fake_spotify)
+    commands.playback_service = fake_playback
+
+    player = SimpleNamespace(connected=True, tag="P")
+    state = MediaPlayer()
+    guild_id = 101
+
+    commands._enqueue_spotify_backfill_job(
+        guild_id,
+        player=player,
+        state=state,
+        cursor={"key": "job1", "idx": 0},
+    )
+    commands._enqueue_spotify_backfill_job(
+        guild_id,
+        player=player,
+        state=state,
+        cursor={"key": "job2", "idx": 0},
+    )
+
+    await commands.spotify_backfill_tasks[guild_id]
+
+    assert fake_playback.calls == [
+        ("P", ["q1"]),
+        ("P", ["q2"]),
+        ("P", ["q3"]),
+    ]
+    assert guild_id not in commands.spotify_backfill_queues
+    assert guild_id not in commands.spotify_backfill_tasks
+
+
+@pytest.mark.asyncio
+async def test_media_commands_cancel_spotify_backfill_clears_state():
+    commands = MediaCommands(SimpleNamespace())
+    guild_id = 202
+    state = MediaPlayer()
+
+    commands.spotify_backfill_queues[guild_id] = deque(
+        [
+            SpotifyBackfillJob(
+                player=SimpleNamespace(connected=True),
+                state=state,
+                cursor={"key": "job", "idx": 0},
+            )
+        ]
+    )
+    task = asyncio.create_task(asyncio.sleep(5))
+    commands.spotify_backfill_tasks[guild_id] = task
+
+    commands._cancel_spotify_backfill(guild_id)
+    await asyncio.sleep(0)
+
+    assert guild_id not in commands.spotify_backfill_queues
+    assert guild_id not in commands.spotify_backfill_tasks
+    assert task.cancelled()
 
 
 def test_lavalink_service_from_env(monkeypatch):

@@ -8,6 +8,7 @@ import discord
 
 from Music_player.music_player import playerView
 from services.mediaService import MediaPlayer
+from services.spotifyService import SpotifyService
 from utils.utils import log
 
 try:
@@ -27,6 +28,7 @@ class PlatformStyle:
 class MediaPlaybackService:
     SOUNDCLOUD_PREVIEW_MIN_MS = 28000
     SOUNDCLOUD_PREVIEW_MAX_MS = 32000
+    SPOTIFY_INITIAL_LIMIT = 100
 
     PLATFORM_STYLES: dict[str, PlatformStyle] = {
         "youtube": PlatformStyle(
@@ -55,8 +57,16 @@ class MediaPlaybackService:
         ),
     }
 
-    def __init__(self, *, default_volume: int = 100):
+    def __init__(
+        self,
+        *,
+        default_volume: int = 100,
+        spotify_service: SpotifyService | None = None,
+        spotify_initial_limit: int = SPOTIFY_INITIAL_LIMIT,
+    ):
         self.default_volume = default_volume
+        self.spotify_service = spotify_service or SpotifyService()
+        self.spotify_initial_limit = max(1, int(spotify_initial_limit))
 
     @staticmethod
     def _normalize_text(value: object) -> str:
@@ -214,6 +224,62 @@ class MediaPlaybackService:
         tracks = list(result)
         return tracks[0] if tracks else None
 
+    async def search_youtube_music_track(self, query: str):
+        if not query or wavelink is None:
+            return None
+
+        result = await wavelink.Playable.search(query, source=wavelink.TrackSource.YouTubeMusic)
+        if not result:
+            return None
+
+        if isinstance(result, wavelink.Playlist):
+            tracks = list(result)
+            return tracks[0] if tracks else None
+
+        tracks = list(result)
+        return tracks[0] if tracks else None
+
+    async def enqueue_spotify_queries(
+        self,
+        player,
+        queries: list[str],
+        *,
+        state: MediaPlayer | None = None,
+        source_platform: str = "spotify",
+    ) -> dict[str, int | str | None]:
+        added = 0
+        skipped = 0
+        first_title: str | None = None
+
+        for query in list(queries or []):
+            query_text = str(query or "").strip()
+            if not query_text:
+                skipped += 1
+                continue
+
+            resolved_track = await self.search_youtube_music_track(query_text)
+            if resolved_track is None:
+                skipped += 1
+                continue
+
+            resolved_track = await self.resolve_track_for_playback(resolved_track)
+            if state is not None:
+                await state.set_track_platforms(
+                    resolved_track,
+                    added_from=source_platform,
+                    playback_via=self.detect_platform_id(resolved_track),
+                )
+
+            added += player.queue.put(resolved_track)
+            if first_title is None:
+                first_title = MediaPlayer.get_track_title(resolved_track)
+
+        return {
+            "added": added,
+            "skipped": skipped,
+            "first_title": first_title,
+        }
+
     async def resolve_track_for_playback(
         self,
         track,
@@ -365,6 +431,36 @@ class MediaPlaybackService:
         return result
 
     async def enqueue_query(self, player, query: str, state: MediaPlayer | None = None):
+        if self.is_spotify_url(query):
+            payload = await self.spotify_service.resolve_for_enqueue(
+                query,
+                initial_limit=self.spotify_initial_limit,
+            )
+            enqueue_stats = await self.enqueue_spotify_queries(
+                player,
+                payload.get("initial_queries") or [],
+                state=state,
+                source_platform="spotify",
+            )
+            added = int(enqueue_stats["added"] or 0)
+            skipped = int(enqueue_stats["skipped"] or 0)
+            kind = str(payload.get("kind") or "track")
+            title = str(payload.get("display_title") or enqueue_stats.get("first_title") or "")
+
+            await log(
+                "INFO: Spotify import processed "
+                f"(kind={kind}, added={added}, skipped={skipped}, deferred="
+                f"{'yes' if payload.get('deferred_cursor') else 'no'})"
+            )
+            return {
+                "added": added,
+                "title": title or None,
+                "is_playlist": kind in {"playlist", "album"},
+                "spotify_deferred_cursor": payload.get("deferred_cursor"),
+                "spotify_kind": kind,
+                "skipped": skipped,
+            }
+
         result = await self.resolve_tracks(query)
         force_soundcloud_fallback = self.is_soundcloud_url(query)
         source_platform = self.detect_source_platform_from_query(query)
@@ -390,6 +486,7 @@ class MediaPlaybackService:
                 "added": added,
                 "title": result.name,
                 "is_playlist": True,
+                "spotify_deferred_cursor": None,
             }
 
         tracks = list(result)
@@ -412,6 +509,7 @@ class MediaPlaybackService:
             "added": added,
             "title": MediaPlayer.get_track_title(first),
             "is_playlist": False,
+            "spotify_deferred_cursor": None,
         }
 
     async def start_if_idle(self, player, state: MediaPlayer | None = None) -> bool:

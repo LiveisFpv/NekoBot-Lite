@@ -46,7 +46,6 @@ Discord bot on Python with commands for memes, Reddit, anime search, and music p
 
 ## Roadmap
 
-- Spotify integration for music commands (search/import/play flow).
 - Additional command catalog improvements in Discord UI and bot profile.
 
 ## Available Commands (Default prefix: `%`)
@@ -89,7 +88,9 @@ Music:
 
 Notes:
 
-- `%play` supports direct track/playlist URLs from YouTube and SoundCloud.
+- `%play` supports direct URLs from YouTube/SoundCloud and Spotify (`track`, `playlist`, `album`).
+- Spotify playback uses Spotify metadata + YouTube Music matching.
+- For Spotify playlists/albums: first 100 tracks are added immediately, remaining tracks are queued in background.
 
 Game:
 
@@ -110,7 +111,7 @@ Reddit:
 - `REDDIT_CLIENT_SECRET`
 - `REDDIT_USER_AGENT`
 
-Spotify (planned):
+Spotify:
 
 - `SPOTIFY_CLIENT_ID`
 - `SPOTIFY_CLIENT_SECRET`
