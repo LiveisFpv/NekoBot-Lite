@@ -25,6 +25,9 @@ class PlatformStyle:
 
 
 class MediaPlaybackService:
+    SOUNDCLOUD_PREVIEW_MIN_MS = 28000
+    SOUNDCLOUD_PREVIEW_MAX_MS = 32000
+
     PLATFORM_STYLES: dict[str, PlatformStyle] = {
         "youtube": PlatformStyle(
             platform_id="youtube",
@@ -150,6 +153,76 @@ class MediaPlaybackService:
         return any(getattr(item, "filename", "") == filename for item in attachments)
 
     @staticmethod
+    def _get_track_artist(track) -> str:
+        for attr in ("author", "artist", "uploader"):
+            value = getattr(track, attr, None)
+            if value:
+                return str(value).strip()
+        return ""
+
+    def is_soundcloud_preview_track(self, track) -> bool:
+        if track is None or self.detect_platform_id(track) != "soundcloud":
+            return False
+
+        for attr in ("is_preview", "isPreview", "preview"):
+            value = getattr(track, attr, None)
+            if value is not None:
+                return bool(value)
+
+        plugin_info = getattr(track, "plugin_info", None) or getattr(track, "pluginInfo", None)
+        if isinstance(plugin_info, dict):
+            for key in ("is_preview", "isPreview", "preview"):
+                if key in plugin_info:
+                    return bool(plugin_info.get(key))
+
+        length = getattr(track, "length", None)
+        if isinstance(length, (int, float)):
+            duration = int(length)
+            return self.SOUNDCLOUD_PREVIEW_MIN_MS <= duration <= self.SOUNDCLOUD_PREVIEW_MAX_MS
+
+        return False
+
+    async def search_youtube_music_fallback(self, track):
+        if track is None or wavelink is None:
+            return None
+
+        title = MediaPlayer.get_track_title(track).strip()
+        artist = self._get_track_artist(track)
+
+        if not title:
+            return None
+
+        if artist and artist.lower() not in title.lower():
+            query = f"{artist} - {title}"
+        else:
+            query = title
+
+        result = await wavelink.Playable.search(query, source=wavelink.TrackSource.YouTubeMusic)
+        if not result:
+            return None
+
+        if isinstance(result, wavelink.Playlist):
+            tracks = list(result)
+            return tracks[0] if tracks else None
+
+        tracks = list(result)
+        return tracks[0] if tracks else None
+
+    async def resolve_track_for_playback(self, track):
+        if not self.is_soundcloud_preview_track(track):
+            return track
+
+        fallback_track = await self.search_youtube_music_fallback(track)
+        if fallback_track is None:
+            return track
+
+        await log(
+            "INFO: Replaced SoundCloud preview track with YouTube Music fallback: "
+            f"{MediaPlayer.get_track_title(track)} -> {MediaPlayer.get_track_title(fallback_track)}"
+        )
+        return fallback_track
+
+    @staticmethod
     def is_url(value: str) -> bool:
         parsed = urlparse((value or "").strip())
         return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
@@ -210,7 +283,10 @@ class MediaPlaybackService:
             return {"added": 0, "title": None, "is_playlist": False}
 
         if isinstance(result, wavelink.Playlist):
-            added = player.queue.put(result)
+            added = 0
+            for original_track in list(result):
+                track = await self.resolve_track_for_playback(original_track)
+                added += player.queue.put(track)
             return {
                 "added": added,
                 "title": result.name,
@@ -222,6 +298,7 @@ class MediaPlaybackService:
         if first is None:
             return {"added": 0, "title": None, "is_playlist": False}
 
+        first = await self.resolve_track_for_playback(first)
         added = player.queue.put(first)
         return {
             "added": added,
@@ -238,6 +315,7 @@ class MediaPlaybackService:
         except Exception:
             return False
 
+        next_track = await self.resolve_track_for_playback(next_track)
         await player.play(next_track, volume=self.default_volume)
         return True
 
@@ -345,6 +423,7 @@ class MediaPlaybackService:
         if current_track is not None:
             player.queue.put_at(0, current_track)
 
+        previous_track = await self.resolve_track_for_playback(previous_track)
         await player.play(previous_track, replace=True, volume=self.default_volume)
         return True
 
@@ -393,4 +472,5 @@ class MediaPlaybackService:
         except Exception:
             return
 
+        next_track = await self.resolve_track_for_playback(next_track)
         await player.play(next_track, volume=self.default_volume)

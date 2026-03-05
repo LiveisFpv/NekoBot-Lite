@@ -26,7 +26,7 @@ services:
       - intenal
 
   lavalink:
-    image: ghcr.io/lavalink-devs/lavalink:4
+    image: ghcr.io/lavalink-devs/lavalink:4.2.1
     container_name: nekobot-lavalink
     restart: unless-stopped
     environment:
@@ -41,7 +41,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "if command -v curl >/dev/null 2>&1; then curl -fsS -H \"Authorization: ${LAVALINK_PASSWORD}\" http://localhost:2333/v4/info >/dev/null; elif command -v wget >/dev/null 2>&1; then wget -q --header=\"Authorization: ${LAVALINK_PASSWORD}\" -O - http://localhost:2333/v4/info >/dev/null; else exit 1; fi",
+          "if command -v curl >/dev/null 2>&1; then curl -fsS -H \"Authorization: ${LAVALINK_PASSWORD:-youshallnotpass}\" http://localhost:2333/v4/info >/dev/null; elif command -v wget >/dev/null 2>&1; then wget -q --header=\"Authorization: ${LAVALINK_PASSWORD:-youshallnotpass}\" -O - http://localhost:2333/v4/info >/dev/null; else exit 1; fi",
         ]
       interval: 10s
       timeout: 5s

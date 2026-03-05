@@ -35,6 +35,8 @@ lavalink:
     trackStuckThresholdMs: 10000
     useSeekGhosting: true
     youtubePlaylistLoadLimit: 50
+    soundcloudSearchEnabled: true
+    soundcloudFilterOutPreviewTracks: true
 plugins:
   youtube:
     enabled: true

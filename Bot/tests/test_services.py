@@ -359,6 +359,68 @@ def test_media_playback_service_get_platform_logo_filename():
     assert service.get_platform_logo_filename("unknown") is None
 
 
+def test_media_playback_service_is_soundcloud_preview_by_length():
+    service = MediaPlaybackService()
+    preview_track = DummyTrack(
+        "SC Preview",
+        uri="https://soundcloud.com/artist/track",
+        length=30000,
+    )
+    full_track = DummyTrack(
+        "SC Full",
+        uri="https://soundcloud.com/artist/track-full",
+        length=180000,
+    )
+
+    assert service.is_soundcloud_preview_track(preview_track) is True
+    assert service.is_soundcloud_preview_track(full_track) is False
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_resolve_track_for_playback_uses_youtube_fallback(monkeypatch):
+    service = MediaPlaybackService()
+    preview_track = DummyTrack(
+        "SC Preview",
+        uri="https://soundcloud.com/artist/track",
+        length=30000,
+    )
+    fallback_track = DummyTrack(
+        "Fallback",
+        uri="https://music.youtube.com/watch?v=fallback",
+        length=180000,
+    )
+
+    monkeypatch.setattr(service, "search_youtube_music_fallback", AsyncMock(return_value=fallback_track))
+
+    resolved = await service.resolve_track_for_playback(preview_track)
+    assert resolved is fallback_track
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_single_track_replaces_soundcloud_preview(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    preview_track = DummyTrack(
+        "SC Preview",
+        uri="https://soundcloud.com/artist/track",
+        length=30000,
+    )
+    fallback_track = DummyTrack(
+        "Fallback Song",
+        uri="https://music.youtube.com/watch?v=fallback",
+        length=180000,
+    )
+
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=[preview_track]))
+    monkeypatch.setattr(service, "resolve_track_for_playback", AsyncMock(return_value=fallback_track))
+
+    result = await service.enqueue_query(player, "https://soundcloud.com/artist/track")
+
+    assert result["title"] == "Fallback Song"
+    assert list(player.queue)[0].title == "Fallback Song"
+
+
 @pytest.mark.asyncio
 async def test_media_playback_service_resolve_tracks_uses_none_source_for_url(monkeypatch):
     service = MediaPlaybackService()
