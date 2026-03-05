@@ -148,11 +148,6 @@ class MediaPlaybackService:
         return discord.File(str(logo_path), filename=filename)
 
     @staticmethod
-    def _message_has_attachment(message, filename: str) -> bool:
-        attachments = getattr(message, "attachments", [])
-        return any(getattr(item, "filename", "") == filename for item in attachments)
-
-    @staticmethod
     def _unique_filenames(*filenames: str | None) -> list[str]:
         seen: set[str] = set()
         result: list[str] = []
@@ -531,23 +526,6 @@ class MediaPlaybackService:
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
-                missing_files: list[discord.File] = []
-                for filename in required_logo_filenames:
-                    if self._message_has_attachment(message, filename):
-                        continue
-                    file_obj = self._load_platform_logo_file(filename)
-                    if file_obj is not None:
-                        missing_files.append(file_obj)
-
-                if missing_files:
-                    attachments = list(getattr(message, "attachments", []))
-                    await message.edit(
-                        embed=embed,
-                        view=view,
-                        attachments=[*attachments, *missing_files],
-                    )
-                    return
-
                 await message.edit(embed=embed, view=view)
                 return
             except Exception:

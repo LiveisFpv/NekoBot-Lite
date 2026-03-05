@@ -201,12 +201,14 @@ class DummyMessage:
         self.id = message_id
         self.last_embed = None
         self.last_view = None
+        self.last_edit_kwargs = None
         self.edits = 0
         self.attachments = list(attachments or [])
 
     async def edit(self, **kwargs):
         self.last_embed = kwargs.get("embed")
         self.last_view = kwargs.get("view")
+        self.last_edit_kwargs = kwargs
         self.edits += 1
 
 
@@ -636,6 +638,7 @@ async def test_media_playback_service_publish_now_playing_updates_existing(monke
 
     assert existing.edits == 1
     assert channel.sent_count == 0
+    assert "attachments" not in (existing.last_edit_kwargs or {})
 
 
 @pytest.mark.asyncio
@@ -670,6 +673,7 @@ async def test_media_playback_service_publish_now_playing_updates_existing_when_
     assert channel.sent_count == 0
     assert message_id == 777
     assert existing.edits == 1
+    assert "attachments" not in (existing.last_edit_kwargs or {})
 
 
 @pytest.mark.asyncio
@@ -712,7 +716,6 @@ async def test_media_playback_service_publish_now_playing_sends_new_message_with
     assert message_id is not None
     sent_message = channel.messages[message_id]
     assert {item.filename for item in sent_message.attachments} == {
-        "youtube-logo.png",
         "youtube-logo.png",
     }
 
