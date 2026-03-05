@@ -523,7 +523,7 @@ async def test_media_playback_service_publish_now_playing_updates_existing(monke
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_publish_now_playing_recreates_message_when_attachment_missing(
+async def test_media_playback_service_publish_now_playing_updates_existing_when_attachment_missing(
     monkeypatch,
 ):
     service = MediaPlaybackService()
@@ -539,11 +539,6 @@ async def test_media_playback_service_publish_now_playing_recreates_message_when
     bot = DummyBot(channel)
 
     monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
-    monkeypatch.setattr(
-        service,
-        "_load_platform_logo_file",
-        lambda filename: SimpleNamespace(filename=filename),
-    )
 
     await service.publish_now_playing(
         bot,
@@ -554,10 +549,9 @@ async def test_media_playback_service_publish_now_playing_recreates_message_when
     )
 
     _, message_id = await state.get_controller_message()
-    assert channel.sent_count == 1
-    assert message_id is not None
-    assert message_id != 777
-    assert existing.edits == 0
+    assert channel.sent_count == 0
+    assert message_id == 777
+    assert existing.edits == 1
 
 
 @pytest.mark.asyncio

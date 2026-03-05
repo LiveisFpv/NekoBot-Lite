@@ -317,14 +317,8 @@ class MediaPlaybackService:
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
-                if logo_filename and not self._message_has_attachment(message, logo_filename):
-                    await log(
-                        "INFO: Controller message has no platform logo attachment. "
-                        "Sending a new controller message."
-                    )
-                else:
-                    await message.edit(embed=embed, view=view)
-                    return
+                await message.edit(embed=embed, view=view)
+                return
             except Exception:
                 await log("WARNING: Failed to update controller message. Sending a new one.")
 
