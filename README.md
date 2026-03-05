@@ -87,6 +87,10 @@ Music:
 - `%skip`
 - `%leave`
 
+Notes:
+
+- `%play` supports direct track/playlist URLs from YouTube and SoundCloud.
+
 Game:
 
 - `%snake`

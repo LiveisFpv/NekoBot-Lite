@@ -12,7 +12,7 @@ lavalink:
       youtube: false
       http: true
       bandcamp: false
-      soundcloud: false
+      soundcloud: true
       twitch: false
       vimeo: false
       nico: false

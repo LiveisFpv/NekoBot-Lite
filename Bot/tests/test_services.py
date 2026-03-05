@@ -313,6 +313,36 @@ def test_media_playback_service_normalize_youtu_be_url():
 
 
 @pytest.mark.asyncio
+async def test_media_playback_service_resolve_tracks_uses_none_source_for_url(monkeypatch):
+    service = MediaPlaybackService()
+    search_mock = AsyncMock(return_value=[])
+    fake_wavelink = SimpleNamespace(
+        Playable=SimpleNamespace(search=search_mock),
+        TrackSource=SimpleNamespace(YouTubeMusic="youtube_music"),
+    )
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", fake_wavelink)
+
+    await service.resolve_tracks("https://soundcloud.com/artist/track")
+
+    search_mock.assert_awaited_once_with("https://soundcloud.com/artist/track", source=None)
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_resolve_tracks_uses_youtube_music_for_text(monkeypatch):
+    service = MediaPlaybackService()
+    search_mock = AsyncMock(return_value=[])
+    fake_wavelink = SimpleNamespace(
+        Playable=SimpleNamespace(search=search_mock),
+        TrackSource=SimpleNamespace(YouTubeMusic="youtube_music"),
+    )
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", fake_wavelink)
+
+    await service.resolve_tracks("artist - song")
+
+    search_mock.assert_awaited_once_with("artist - song", source="youtube_music")
+
+
+@pytest.mark.asyncio
 async def test_media_playback_service_start_if_idle_starts_track():
     service = MediaPlaybackService(default_volume=55)
     player = DummyPlayer()
