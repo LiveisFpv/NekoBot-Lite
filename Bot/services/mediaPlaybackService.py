@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -23,6 +24,18 @@ class PlatformStyle:
     display_name: str
     color: int
     logo_filename: str | None
+
+
+class YandexMusicIntegrationError(Exception):
+    pass
+
+
+class YandexMusicConfigError(YandexMusicIntegrationError):
+    pass
+
+
+class YandexMusicApiError(YandexMusicIntegrationError):
+    pass
 
 
 class MediaPlaybackService:
@@ -49,6 +62,12 @@ class MediaPlaybackService:
             color=0x1DB954,
             logo_filename="spotify-logo.png",
         ),
+        "yandexmusic": PlatformStyle(
+            platform_id="yandexmusic",
+            display_name="Yandex Music",
+            color=0xFC3F1D,
+            logo_filename="yandex-music-logo.png",
+        ),
         "unknown": PlatformStyle(
             platform_id="unknown",
             display_name="Unknown",
@@ -71,6 +90,10 @@ class MediaPlaybackService:
     @staticmethod
     def _normalize_text(value: object) -> str:
         return str(value or "").strip().lower()
+
+    @staticmethod
+    def _is_playlist_result(result) -> bool:
+        return wavelink is not None and isinstance(result, wavelink.Playlist)
 
     @staticmethod
     def _format_track_reference(track) -> str:
@@ -113,6 +136,8 @@ class MediaPlaybackService:
                 return "soundcloud"
             if "spotify" in source:
                 return "spotify"
+            if "yandexmusic" in source or "yandex" in source:
+                return "yandexmusic"
             if "youtube" in source or "ytm" in source:
                 return "youtube"
 
@@ -129,6 +154,8 @@ class MediaPlaybackService:
                 return "soundcloud"
             if host == "spotify.com" or host.endswith(".spotify.com"):
                 return "spotify"
+            if host.startswith("music.yandex.") or ".music.yandex." in host:
+                return "yandexmusic"
 
         return "unknown"
 
@@ -217,7 +244,7 @@ class MediaPlaybackService:
         if not result:
             return None
 
-        if isinstance(result, wavelink.Playlist):
+        if self._is_playlist_result(result):
             tracks = list(result)
             return tracks[0] if tracks else None
 
@@ -232,7 +259,7 @@ class MediaPlaybackService:
         if not result:
             return None
 
-        if isinstance(result, wavelink.Playlist):
+        if self._is_playlist_result(result):
             tracks = list(result)
             return tracks[0] if tracks else None
 
@@ -343,6 +370,18 @@ class MediaPlaybackService:
 
         return host == "spotify.com" or host.endswith(".spotify.com")
 
+    @staticmethod
+    def is_yandex_music_url(value: str) -> bool:
+        parsed = urlparse((value or "").strip())
+        if parsed.scheme not in {"http", "https"}:
+            return False
+
+        host = (parsed.netloc or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+
+        return host.startswith("music.yandex.") or ".music.yandex." in host
+
     def detect_source_platform_from_query(self, query: str) -> str:
         candidate = (query or "").strip()
         if self.is_soundcloud_url(candidate):
@@ -351,6 +390,8 @@ class MediaPlaybackService:
             return "youtube"
         if self.is_spotify_url(candidate):
             return "spotify"
+        if self.is_yandex_music_url(candidate):
+            return "yandexmusic"
         return "youtube"
 
     async def _attach_track_platform_meta(
@@ -431,6 +472,67 @@ class MediaPlaybackService:
         return result
 
     async def enqueue_query(self, player, query: str, state: MediaPlayer | None = None):
+        if self.is_yandex_music_url(query):
+            yandex_token = (os.getenv("YANDEX_TOKEN") or "").strip()
+            if not yandex_token:
+                raise YandexMusicConfigError(
+                    "YANDEX_TOKEN is not configured for Yandex Music URLs."
+                )
+
+            try:
+                result = await self.resolve_tracks(query)
+            except Exception as exc:
+                raise YandexMusicApiError(
+                    f"Failed to resolve Yandex Music URL: {type(exc).__name__}: {exc}"
+                ) from exc
+
+            if not result:
+                raise YandexMusicApiError(
+                    "Yandex Music URL returned no tracks (service unavailable or URL is not accessible)."
+                )
+
+            source_platform = "yandexmusic"
+
+            if self._is_playlist_result(result):
+                added = 0
+                for original_track in list(result):
+                    track = await self.resolve_track_for_playback(original_track)
+                    await self._attach_track_platform_meta(
+                        state,
+                        original_track,
+                        track,
+                        source_platform=source_platform,
+                    )
+                    added += player.queue.put(track)
+                return {
+                    "added": added,
+                    "title": result.name,
+                    "is_playlist": True,
+                    "spotify_deferred_cursor": None,
+                }
+
+            tracks = list(result)
+            first = tracks[0] if tracks else None
+            if first is None:
+                raise YandexMusicApiError(
+                    "Yandex Music URL returned empty track list."
+                )
+
+            first = await self.resolve_track_for_playback(first)
+            await self._attach_track_platform_meta(
+                state,
+                tracks[0],
+                first,
+                source_platform=source_platform,
+            )
+            added = player.queue.put(first)
+            return {
+                "added": added,
+                "title": MediaPlayer.get_track_title(first),
+                "is_playlist": False,
+                "spotify_deferred_cursor": None,
+            }
+
         if self.is_spotify_url(query):
             payload = await self.spotify_service.resolve_for_enqueue(
                 query,
@@ -468,7 +570,7 @@ class MediaPlaybackService:
         if not result:
             return {"added": 0, "title": None, "is_playlist": False}
 
-        if isinstance(result, wavelink.Playlist):
+        if self._is_playlist_result(result):
             added = 0
             for original_track in list(result):
                 track = await self.resolve_track_for_playback(

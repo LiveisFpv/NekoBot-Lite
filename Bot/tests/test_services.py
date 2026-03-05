@@ -13,7 +13,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from services.animeService import AnimeService
 from services.generalService import GeneralService
 from services.lavalinkService import LavalinkService
-from services.mediaPlaybackService import MediaPlaybackService
+from services.mediaPlaybackService import (
+    MediaPlaybackService,
+    YandexMusicApiError,
+    YandexMusicConfigError,
+)
 from services.mediaService import MediaPlayer
 from services.memeService import MemeService
 from services.spotifyService import SpotifyConfigError, SpotifyService
@@ -511,6 +515,75 @@ async def test_media_playback_service_enqueue_spotify_raises_config_error():
         await service.enqueue_query(player, "https://open.spotify.com/track/123")
 
 
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_yandex_track_sets_meta(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    state = MediaPlayer()
+    yandex_track = DummyTrack(
+        "YM Song",
+        uri="https://music.yandex.ru/album/1/track/2",
+        source="yandexmusic",
+    )
+
+    monkeypatch.setenv("YANDEX_TOKEN", "token")
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=[yandex_track]))
+
+    result = await service.enqueue_query(player, "https://music.yandex.ru/album/1/track/2", state)
+
+    assert result["added"] == 1
+    assert result["is_playlist"] is False
+    assert await state.get_track_platforms(yandex_track) == ("yandexmusic", "yandexmusic")
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_yandex_playlist(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    state = MediaPlayer()
+    playlist = DummyPlaylist(
+        "YM List",
+        [
+            DummyTrack("A", uri="https://music.yandex.ru/album/1/track/10", source="yandexmusic"),
+            DummyTrack("B", uri="https://music.yandex.ru/album/1/track/11", source="yandexmusic"),
+        ],
+    )
+
+    monkeypatch.setenv("YANDEX_TOKEN", "token")
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=playlist))
+
+    result = await service.enqueue_query(player, "https://music.yandex.ru/users/a/playlists/1", state)
+
+    assert result["is_playlist"] is True
+    assert result["added"] == 2
+    first_track = list(player.queue)[0]
+    assert await state.get_track_platforms(first_track) == ("yandexmusic", "yandexmusic")
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_yandex_requires_token(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+
+    monkeypatch.delenv("YANDEX_TOKEN", raising=False)
+
+    with pytest.raises(YandexMusicConfigError):
+        await service.enqueue_query(player, "https://music.yandex.ru/album/1/track/2")
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_yandex_wraps_api_error(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+
+    monkeypatch.setenv("YANDEX_TOKEN", "token")
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(side_effect=RuntimeError("403 Forbidden")))
+
+    with pytest.raises(YandexMusicApiError):
+        await service.enqueue_query(player, "https://music.yandex.ru/album/1/track/2")
+
+
 def test_media_playback_service_normalize_youtube_playlist_url():
     service = MediaPlaybackService()
     normalized = service.normalize_query(
@@ -531,11 +604,13 @@ def test_media_playback_service_detect_platform_id_by_uri():
     youtube_track = DummyTrack("YT", uri="https://www.youtube.com/watch?v=abc")
     soundcloud_track = DummyTrack("SC", uri="https://soundcloud.com/artist/song")
     spotify_track = DummyTrack("SP", uri="https://open.spotify.com/track/123")
+    yandex_track = DummyTrack("YM", uri="https://music.yandex.ru/album/1/track/2")
     unknown_track = DummyTrack("UNK", uri="https://example.com/audio.mp3")
 
     assert service.detect_platform_id(youtube_track) == "youtube"
     assert service.detect_platform_id(soundcloud_track) == "soundcloud"
     assert service.detect_platform_id(spotify_track) == "spotify"
+    assert service.detect_platform_id(yandex_track) == "yandexmusic"
     assert service.detect_platform_id(unknown_track) == "unknown"
 
 
@@ -557,6 +632,7 @@ def test_media_playback_service_get_platform_logo_filename():
     assert service.get_platform_logo_filename("youtube") == "youtube-logo.png"
     assert service.get_platform_logo_filename("soundcloud") == "soundcloud-logo.png"
     assert service.get_platform_logo_filename("spotify") == "spotify-logo.png"
+    assert service.get_platform_logo_filename("yandexmusic") == "yandex-music-logo.png"
     assert service.get_platform_logo_filename("unknown") is None
 
 
@@ -566,6 +642,7 @@ def test_media_playback_service_detect_source_platform_from_query():
     assert service.detect_source_platform_from_query("https://soundcloud.com/a/b") == "soundcloud"
     assert service.detect_source_platform_from_query("https://youtube.com/watch?v=abc") == "youtube"
     assert service.detect_source_platform_from_query("https://open.spotify.com/track/123") == "spotify"
+    assert service.detect_source_platform_from_query("https://music.yandex.ru/album/1/track/2") == "yandexmusic"
     assert service.detect_source_platform_from_query("artist - song") == "youtube"
 
 
@@ -575,6 +652,14 @@ def test_media_playback_service_is_soundcloud_url():
     assert service.is_soundcloud_url("https://soundcloud.com/a/b") is True
     assert service.is_soundcloud_url("https://www.soundcloud.com/a/b") is True
     assert service.is_soundcloud_url("https://youtube.com/watch?v=abc") is False
+
+
+def test_media_playback_service_is_yandex_music_url():
+    service = MediaPlaybackService()
+
+    assert service.is_yandex_music_url("https://music.yandex.ru/album/1/track/2") is True
+    assert service.is_yandex_music_url("https://music.yandex.com/album/1") is True
+    assert service.is_yandex_music_url("https://open.spotify.com/track/123") is False
 
 
 def test_media_playback_service_is_soundcloud_preview_by_length():
@@ -721,6 +806,29 @@ async def test_media_playback_service_build_embed_prefers_track_artwork(monkeypa
 
     assert embed.thumbnail.url == "https://img.example.com/artwork.png"
     assert set(required_logos) == {"youtube-logo.png"}
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_build_embed_yandex_platform_style(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    track = DummyTrack(
+        "YM",
+        uri="https://music.yandex.ru/album/1/track/2",
+        source="yandexmusic",
+    )
+    player.current = track
+    state = MediaPlayer()
+    await state.set_track_platforms(track, added_from="yandexmusic", playback_via="yandexmusic")
+
+    monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "yandex-music-logo.png")
+
+    embed, required_logos = await service.build_now_playing_embed(player, state)
+
+    assert embed.author.icon_url == "attachment://yandex-music-logo.png"
+    assert embed.footer.icon_url == "attachment://yandex-music-logo.png"
+    assert set(required_logos) == {"yandex-music-logo.png"}
+    assert int(embed.color) == MediaPlaybackService.get_platform_style("yandexmusic").color
 
 
 @pytest.mark.asyncio

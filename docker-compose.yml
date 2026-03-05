@@ -15,6 +15,7 @@ services:
       - REDDIT_USER_AGENT=${REDDIT_USER_AGENT}
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
       - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      - YANDEX_TOKEN=${YANDEX_TOKEN}
       - LAVALINK_HOST=${LAVALINK_HOST:-lavalink}
       - LAVALINK_PORT=${LAVALINK_PORT:-2333}
       - LAVALINK_PASSWORD=${LAVALINK_PASSWORD:-youshallnotpass}
@@ -33,6 +34,10 @@ services:
       - _JAVA_OPTIONS=-Xmx512M
       - SERVER_PORT=2333
       - LAVALINK_SERVER_PASSWORD=${LAVALINK_PASSWORD:-youshallnotpass}
+      - YANDEX_TOKEN=${YANDEX_TOKEN}
+      - YANDEX_PROXY_URL=${YANDEX_PROXY_URL:-}
+      - YANDEX_PROXY_USERNAME=${YANDEX_PROXY_USERNAME:-}
+      - YANDEX_PROXY_PASSWORD=${YANDEX_PROXY_PASSWORD:-}
     volumes:
       - ./server_conf/lavalink/application.yml:/opt/Lavalink/application.yml:ro
     ports:

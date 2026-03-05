@@ -7,7 +7,11 @@ from discord.ext import commands
 from discord.ext.commands import Context
 
 from services.lavalinkService import LavalinkService
-from services.mediaPlaybackService import MediaPlaybackService
+from services.mediaPlaybackService import (
+    MediaPlaybackService,
+    YandexMusicApiError,
+    YandexMusicConfigError,
+)
 from services.mediaService import MediaPlayer
 from services.spotifyService import SpotifyApiError, SpotifyConfigError
 from utils.utils import log
@@ -402,6 +406,29 @@ class MediaCommands(commands.Cog):
 
         try:
             result = await self.playback_service.enqueue_query(player, query, state)
+        except (YandexMusicConfigError, YandexMusicApiError) as exc:
+            cause = getattr(exc, "__cause__", None)
+            cause_text = (
+                f"{type(cause).__name__}: {cause}" if cause is not None else "None"
+            )
+            error_line = (
+                "ERROR: Yandex Music enqueue failed "
+                f"(type={type(exc).__name__}, message={exc}, cause={cause_text})"
+            )
+            await log(error_line)
+            print(error_line)
+
+            if isinstance(exc, YandexMusicConfigError):
+                await self._send_ctx_message(
+                    ctx,
+                    "Yandex Music недоступен: укажите YANDEX_TOKEN в окружении сервера.",
+                )
+            else:
+                await self._send_ctx_message(
+                    ctx,
+                    "Yandex Music недоступен на сервере или по данному URL.",
+                )
+            return
         except (SpotifyConfigError, SpotifyApiError) as exc:
             cause = getattr(exc, "__cause__", None)
             cause_text = (

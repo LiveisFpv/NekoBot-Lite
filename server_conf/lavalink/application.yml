@@ -6,6 +6,9 @@ lavalink:
   plugins:
     - dependency: "dev.lavalink.youtube:youtube-plugin:1.16.0"
       snapshot: false
+    - dependency: "com.github.topi314.lavasrc:lavasrc-plugin:4.8.1"
+      repository: "https://maven.lavalink.dev/releases"
+      snapshot: false
   server:
     password: ${LAVALINK_SERVER_PASSWORD:youshallnotpass}
     sources:
@@ -48,6 +51,18 @@ plugins:
       - ANDROID_VR
       - WEB
       - WEBEMBEDDED
+  lavasrc:
+    sources:
+      yandexmusic: true
+    yandexmusic:
+      accessToken: ${YANDEX_TOKEN:}
+      playlistLoadLimit: 1
+      albumLoadLimit: 1
+      artistLoadLimit: 1
+    # proxy:
+    #   url: ${YANDEX_PROXY_URL:}
+    #   username: ${YANDEX_PROXY_USERNAME:}
+    #   password: ${YANDEX_PROXY_PASSWORD:}
 
 logging:
   level:
