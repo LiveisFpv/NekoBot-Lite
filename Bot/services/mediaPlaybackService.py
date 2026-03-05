@@ -208,8 +208,16 @@ class MediaPlaybackService:
         tracks = list(result)
         return tracks[0] if tracks else None
 
-    async def resolve_track_for_playback(self, track):
-        if not self.is_soundcloud_preview_track(track):
+    async def resolve_track_for_playback(
+        self,
+        track,
+        *,
+        force_soundcloud_fallback: bool = False,
+    ):
+        if track is None or self.detect_platform_id(track) != "soundcloud":
+            return track
+
+        if not force_soundcloud_fallback and not self.is_soundcloud_preview_track(track):
             return track
 
         fallback_track = await self.search_youtube_music_fallback(track)
@@ -226,6 +234,18 @@ class MediaPlaybackService:
     def is_url(value: str) -> bool:
         parsed = urlparse((value or "").strip())
         return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+    @staticmethod
+    def is_soundcloud_url(value: str) -> bool:
+        parsed = urlparse((value or "").strip())
+        if parsed.scheme not in {"http", "https"}:
+            return False
+
+        host = (parsed.netloc or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+
+        return host == "soundcloud.com" or host.endswith(".soundcloud.com")
 
     @staticmethod
     def normalize_query(value: str) -> str:
@@ -278,6 +298,7 @@ class MediaPlaybackService:
 
     async def enqueue_query(self, player, query: str):
         result = await self.resolve_tracks(query)
+        force_soundcloud_fallback = self.is_soundcloud_url(query)
 
         if not result:
             return {"added": 0, "title": None, "is_playlist": False}
@@ -285,7 +306,10 @@ class MediaPlaybackService:
         if isinstance(result, wavelink.Playlist):
             added = 0
             for original_track in list(result):
-                track = await self.resolve_track_for_playback(original_track)
+                track = await self.resolve_track_for_playback(
+                    original_track,
+                    force_soundcloud_fallback=force_soundcloud_fallback,
+                )
                 added += player.queue.put(track)
             return {
                 "added": added,
@@ -298,7 +322,10 @@ class MediaPlaybackService:
         if first is None:
             return {"added": 0, "title": None, "is_playlist": False}
 
-        first = await self.resolve_track_for_playback(first)
+        first = await self.resolve_track_for_playback(
+            first,
+            force_soundcloud_fallback=force_soundcloud_fallback,
+        )
         added = player.queue.put(first)
         return {
             "added": added,
