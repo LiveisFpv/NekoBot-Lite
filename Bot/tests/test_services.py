@@ -105,10 +105,19 @@ async def test_meme_service_translate_to_ru():
 
 
 class DummyTrack:
-    def __init__(self, title: str, uri: str = "https://example.com", length: int = 180000):
+    def __init__(
+        self,
+        title: str,
+        uri: str = "https://example.com",
+        length: int = 180000,
+        source: str | None = None,
+        artwork: str | None = None,
+    ):
         self.title = title
         self.uri = uri
         self.length = length
+        self.source = source
+        self.artwork = artwork
 
 
 class DummyPlaylist:
@@ -188,11 +197,12 @@ class DummyPlayer:
 
 
 class DummyMessage:
-    def __init__(self, message_id: int):
+    def __init__(self, message_id: int, attachments=None):
         self.id = message_id
         self.last_embed = None
         self.last_view = None
         self.edits = 0
+        self.attachments = list(attachments or [])
 
     async def edit(self, **kwargs):
         self.last_embed = kwargs.get("embed")
@@ -212,7 +222,9 @@ class DummyChannel:
 
     async def send(self, **kwargs):
         self.sent_count += 1
-        message = DummyMessage(100 + self.sent_count)
+        files = kwargs.get("files") or []
+        attachments = [SimpleNamespace(filename=getattr(item, "filename", "")) for item in files]
+        message = DummyMessage(100 + self.sent_count, attachments=attachments)
         message.last_embed = kwargs.get("embed")
         message.last_view = kwargs.get("view")
         self.messages[message.id] = message
@@ -312,6 +324,41 @@ def test_media_playback_service_normalize_youtu_be_url():
     assert normalized == "https://www.youtube.com/watch?v=abcDEF12345"
 
 
+def test_media_playback_service_detect_platform_id_by_uri():
+    service = MediaPlaybackService()
+
+    youtube_track = DummyTrack("YT", uri="https://www.youtube.com/watch?v=abc")
+    soundcloud_track = DummyTrack("SC", uri="https://soundcloud.com/artist/song")
+    spotify_track = DummyTrack("SP", uri="https://open.spotify.com/track/123")
+    unknown_track = DummyTrack("UNK", uri="https://example.com/audio.mp3")
+
+    assert service.detect_platform_id(youtube_track) == "youtube"
+    assert service.detect_platform_id(soundcloud_track) == "soundcloud"
+    assert service.detect_platform_id(spotify_track) == "spotify"
+    assert service.detect_platform_id(unknown_track) == "unknown"
+
+
+def test_media_playback_service_detect_platform_id_prefers_source():
+    service = MediaPlaybackService()
+
+    by_source = DummyTrack(
+        "SRC",
+        uri="https://example.com",
+        source="soundcloud",
+    )
+
+    assert service.detect_platform_id(by_source) == "soundcloud"
+
+
+def test_media_playback_service_get_platform_logo_filename():
+    service = MediaPlaybackService()
+
+    assert service.get_platform_logo_filename("youtube") == "youtube-logo.png"
+    assert service.get_platform_logo_filename("soundcloud") == "soundcloud-logo.png"
+    assert service.get_platform_logo_filename("spotify") == "spotify-logo.png"
+    assert service.get_platform_logo_filename("unknown") is None
+
+
 @pytest.mark.asyncio
 async def test_media_playback_service_resolve_tracks_uses_none_source_for_url(monkeypatch):
     service = MediaPlaybackService()
@@ -340,6 +387,40 @@ async def test_media_playback_service_resolve_tracks_uses_youtube_music_for_text
     await service.resolve_tracks("artist - song")
 
     search_mock.assert_awaited_once_with("artist - song", source="youtube_music")
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_build_embed_falls_back_to_platform_logo_thumbnail(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    player.current = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
+    state = MediaPlayer()
+
+    monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
+
+    embed, logo_filename = await service.build_now_playing_embed(player, state)
+
+    assert logo_filename == "youtube-logo.png"
+    assert embed.thumbnail.url == "attachment://youtube-logo.png"
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_build_embed_prefers_track_artwork(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    player.current = DummyTrack(
+        "Now",
+        uri="https://youtube.com/watch?v=abc",
+        artwork="https://img.example.com/artwork.png",
+    )
+    state = MediaPlayer()
+
+    monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
+
+    embed, logo_filename = await service.build_now_playing_embed(player, state)
+
+    assert logo_filename == "youtube-logo.png"
+    assert embed.thumbnail.url == "https://img.example.com/artwork.png"
 
 
 @pytest.mark.asyncio
@@ -416,18 +497,18 @@ async def test_media_playback_service_back_button_plays_previous():
 async def test_media_playback_service_publish_now_playing_updates_existing(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()
-    player.current = DummyTrack("Now")
+    player.current = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
     player.queue.put(DummyTrack("Next"))
 
     state = MediaPlayer()
     await state.set_controller_message(123, 777)
 
     channel = DummyChannel()
-    existing = DummyMessage(777)
+    existing = DummyMessage(777, attachments=[SimpleNamespace(filename="youtube-logo.png")])
     channel.messages[777] = existing
     bot = DummyBot(channel)
 
-    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+    monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
 
     await service.publish_now_playing(
         bot,
@@ -442,10 +523,50 @@ async def test_media_playback_service_publish_now_playing_updates_existing(monke
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_publish_now_playing_sends_new_message(monkeypatch):
+async def test_media_playback_service_publish_now_playing_recreates_message_when_attachment_missing(
+    monkeypatch,
+):
     service = MediaPlaybackService()
     player = DummyPlayer()
-    player.current = DummyTrack("Now")
+    player.current = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
+
+    state = MediaPlayer()
+    await state.set_controller_message(123, 777)
+
+    channel = DummyChannel()
+    existing = DummyMessage(777, attachments=[])
+    channel.messages[777] = existing
+    bot = DummyBot(channel)
+
+    monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
+    monkeypatch.setattr(
+        service,
+        "_load_platform_logo_file",
+        lambda filename: SimpleNamespace(filename=filename),
+    )
+
+    await service.publish_now_playing(
+        bot,
+        1,
+        player,
+        state,
+        action_handler=lambda action, interaction, view: None,
+    )
+
+    _, message_id = await state.get_controller_message()
+    assert channel.sent_count == 1
+    assert message_id is not None
+    assert message_id != 777
+    assert existing.edits == 0
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_publish_now_playing_sends_new_message_without_existing_id(
+    monkeypatch,
+):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    player.current = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
 
     state = MediaPlayer()
     await state.set_controller_message(123, None)
@@ -453,7 +574,12 @@ async def test_media_playback_service_publish_now_playing_sends_new_message(monk
     channel = DummyChannel()
     bot = DummyBot(channel)
 
-    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+    monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
+    monkeypatch.setattr(
+        service,
+        "_load_platform_logo_file",
+        lambda filename: SimpleNamespace(filename=filename),
+    )
 
     await service.publish_now_playing(
         bot,

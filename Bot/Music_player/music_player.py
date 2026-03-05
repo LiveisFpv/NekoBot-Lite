@@ -25,9 +25,9 @@ class PlayerView(View):
             if not isinstance(child, Button):
                 continue
             if child.custom_id == "loop":
-                child.style = ButtonStyle.green if loop_enabled else ButtonStyle.grey
+                child.style = ButtonStyle.green if loop_enabled else ButtonStyle.secondary
             elif child.custom_id == "loop1":
-                child.style = ButtonStyle.green if loop_one_enabled else ButtonStyle.grey
+                child.style = ButtonStyle.green if loop_one_enabled else ButtonStyle.secondary
 
     async def _dispatch_action(self, action: str, interaction: discord.Interaction):
         self.response = action
@@ -41,31 +41,31 @@ class PlayerView(View):
         if not interaction.response.is_done():
             await interaction.response.defer()
 
-    @discord.ui.button(style=ButtonStyle.grey, emoji="⏮️", custom_id="back", row=0)
+    @discord.ui.button(style=ButtonStyle.secondary, emoji="⏮️", custom_id="back", row=0)
     async def button_callback_back(self, interaction: discord.Interaction, button: Button):
         await self._dispatch_action("back", interaction)
 
-    @discord.ui.button(style=ButtonStyle.grey, emoji="⏯️", custom_id="pla", row=0)
+    @discord.ui.button(style=ButtonStyle.primary, emoji="⏯️", custom_id="play", row=0)
     async def button_callback_play(self, interaction: discord.Interaction, button: Button):
         await self._dispatch_action("play", interaction)
 
-    @discord.ui.button(style=ButtonStyle.grey, emoji="⏭️", custom_id="skip", row=0)
+    @discord.ui.button(style=ButtonStyle.secondary, emoji="⏭️", custom_id="skip", row=0)
     async def button_callback_skip(self, interaction: discord.Interaction, button: Button):
         await self._dispatch_action("skip", interaction)
 
-    @discord.ui.button(style=ButtonStyle.grey, emoji="🔀", custom_id="shuffle", row=0)
+    @discord.ui.button(style=ButtonStyle.secondary, emoji="🔀", custom_id="shuffle", row=0)
     async def button_callback_shuffle(self, interaction: discord.Interaction, button: Button):
         await self._dispatch_action("shuffle", interaction)
 
-    @discord.ui.button(style=ButtonStyle.grey, emoji="🔁", custom_id="loop", row=1)
+    @discord.ui.button(style=ButtonStyle.secondary, emoji="🔁", custom_id="loop", row=1)
     async def button_callback_loop(self, interaction: discord.Interaction, button: Button):
         await self._dispatch_action("loop", interaction)
 
-    @discord.ui.button(style=ButtonStyle.grey, emoji="🔂", custom_id="loop1", row=1)
+    @discord.ui.button(style=ButtonStyle.secondary, emoji="🔂", custom_id="loop1", row=1)
     async def button_callback_loop1(self, interaction: discord.Interaction, button: Button):
         await self._dispatch_action("loop1", interaction)
 
-    @discord.ui.button(style=ButtonStyle.grey, emoji="🛑", custom_id="stop", row=1)
+    @discord.ui.button(style=ButtonStyle.danger, emoji="⏹️", custom_id="stop", row=1)
     async def button_callback_stop(self, interaction: discord.Interaction, button: Button):
         await self._dispatch_action("stop", interaction)
 

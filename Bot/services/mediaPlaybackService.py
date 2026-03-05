@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import discord
@@ -14,9 +16,138 @@ except Exception:
     wavelink = None
 
 
+@dataclass(frozen=True)
+class PlatformStyle:
+    platform_id: str
+    display_name: str
+    color: int
+    logo_filename: str | None
+
+
 class MediaPlaybackService:
+    PLATFORM_STYLES: dict[str, PlatformStyle] = {
+        "youtube": PlatformStyle(
+            platform_id="youtube",
+            display_name="YouTube",
+            color=0xFF0000,
+            logo_filename="youtube-logo.png",
+        ),
+        "soundcloud": PlatformStyle(
+            platform_id="soundcloud",
+            display_name="SoundCloud",
+            color=0xFF5500,
+            logo_filename="soundcloud-logo.png",
+        ),
+        "spotify": PlatformStyle(
+            platform_id="spotify",
+            display_name="Spotify",
+            color=0x1DB954,
+            logo_filename="spotify-logo.png",
+        ),
+        "unknown": PlatformStyle(
+            platform_id="unknown",
+            display_name="Unknown",
+            color=0x4F5D75,
+            logo_filename=None,
+        ),
+    }
+
     def __init__(self, *, default_volume: int = 100):
         self.default_volume = default_volume
+
+    @staticmethod
+    def _normalize_text(value: object) -> str:
+        return str(value or "").strip().lower()
+
+    @staticmethod
+    def _format_track_reference(track) -> str:
+        title = MediaPlayer.get_track_title(track)
+        uri = getattr(track, "uri", None)
+        if uri:
+            uri_text = str(uri)
+            parsed = urlparse(uri_text)
+            if parsed.scheme in {"http", "https"} and parsed.netloc:
+                return f"[{title}]({uri_text})"
+        return title
+
+    @staticmethod
+    def get_track_artwork_url(track) -> str | None:
+        if track is None:
+            return None
+
+        for attr in ("artwork", "artwork_url", "artworkUrl", "thumbnail", "thumbnail_url", "image"):
+            value = getattr(track, attr, None)
+            if value:
+                return str(value)
+        return None
+
+    @classmethod
+    def get_platform_style(cls, platform_id: str) -> PlatformStyle:
+        return cls.PLATFORM_STYLES.get(platform_id, cls.PLATFORM_STYLES["unknown"])
+
+    @classmethod
+    def get_platform_logo_filename(cls, platform_id: str) -> str | None:
+        return cls.get_platform_style(platform_id).logo_filename
+
+    @staticmethod
+    def detect_platform_id(track) -> str:
+        if track is None:
+            return "unknown"
+
+        source = MediaPlaybackService._normalize_text(getattr(track, "source", None))
+        if source:
+            if "soundcloud" in source:
+                return "soundcloud"
+            if "spotify" in source:
+                return "spotify"
+            if "youtube" in source or "ytm" in source:
+                return "youtube"
+
+        uri = MediaPlaybackService._normalize_text(getattr(track, "uri", None))
+        if uri:
+            parsed = urlparse(uri)
+            host = (parsed.netloc or "").lower()
+            if host.startswith("www."):
+                host = host[4:]
+
+            if host in {"youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}:
+                return "youtube"
+            if host == "soundcloud.com" or host.endswith(".soundcloud.com"):
+                return "soundcloud"
+            if host == "spotify.com" or host.endswith(".spotify.com"):
+                return "spotify"
+
+        return "unknown"
+
+    @staticmethod
+    def _assets_dir() -> Path:
+        return Path(__file__).resolve().parent.parent / "assets"
+
+    @classmethod
+    def _asset_path(cls, filename: str) -> Path:
+        return cls._assets_dir() / filename
+
+    @classmethod
+    def _resolve_logo_filename(cls, platform_id: str) -> str | None:
+        logo_filename = cls.get_platform_logo_filename(platform_id)
+        if not logo_filename:
+            return None
+        return logo_filename if cls._asset_path(logo_filename).is_file() else None
+
+    @classmethod
+    def _load_platform_logo_file(cls, filename: str | None) -> discord.File | None:
+        if not filename:
+            return None
+
+        logo_path = cls._asset_path(filename)
+        if not logo_path.is_file():
+            return None
+        return discord.File(str(logo_path), filename=filename)
+
+    @staticmethod
+    def _message_has_attachment(message, filename: str) -> bool:
+        attachments = getattr(message, "attachments", [])
+        return any(getattr(item, "filename", "") == filename for item in attachments)
 
     @staticmethod
     def is_url(value: str) -> bool:
@@ -133,19 +264,43 @@ class MediaPlaybackService:
 
     async def build_now_playing_embed(self, player, state: MediaPlayer):
         current_track = player.current
-        current_title, next_title, queue_size = await state.get_status_snapshot(current_track, player.queue)
+        queue_items = list(player.queue)
+        next_track = queue_items[0] if queue_items else None
+        current_title = MediaPlayer.get_track_title(current_track)
+        next_title = MediaPlayer.get_track_title(next_track)
+        queue_size = len(queue_items)
         duration_text = MediaPlayer.format_duration(getattr(current_track, "length", 0))
         position_text = MediaPlayer.format_duration(getattr(player, "position", 0))
+        progress_text = f"{position_text} / {duration_text}"
 
-        return discord.Embed(
-            title=f"**Сейчас играет** - {current_title}",
-            description=(
-                f"**Следующая песня:** {next_title}\n"
-                f"Песен в списке: {queue_size}\n"
-                f"Прогресс: {position_text} / {duration_text}"
-            ),
-            color=0x0033FF,
+        platform_id = self.detect_platform_id(current_track)
+        platform_style = self.get_platform_style(platform_id)
+        logo_filename = self._resolve_logo_filename(platform_id)
+        logo_url = f"attachment://{logo_filename}" if logo_filename else None
+        artwork_url = self.get_track_artwork_url(current_track)
+
+        embed = discord.Embed(
+            title="Музыкальный плеер",
+            description=f"**Сейчас играет:** {self._format_track_reference(current_track)}",
+            color=platform_style.color,
         )
+        embed.add_field(name="Следующий трек", value=self._format_track_reference(next_track), inline=False)
+        embed.add_field(name="Платформа", value=platform_style.display_name, inline=True)
+        embed.add_field(name="В очереди", value=str(queue_size), inline=True)
+        embed.add_field(name="Прогресс", value=progress_text, inline=True)
+        embed.set_footer(text=f"Текущий трек: {current_title} | Далее: {next_title}")
+
+        if logo_url:
+            embed.set_author(name=f"Сейчас играет · {platform_style.display_name}", icon_url=logo_url)
+        else:
+            embed.set_author(name=f"Сейчас играет · {platform_style.display_name}")
+
+        if artwork_url and self.is_url(artwork_url):
+            embed.set_thumbnail(url=artwork_url)
+        elif logo_url:
+            embed.set_thumbnail(url=logo_url)
+
+        return embed, logo_filename
 
     async def publish_now_playing(self, bot, guild_id: int, player, state: MediaPlayer, action_handler):
         channel_id, message_id = await state.get_controller_message()
@@ -156,18 +311,29 @@ class MediaPlaybackService:
         if channel is None:
             return
 
-        embed = await self.build_now_playing_embed(player, state)
+        embed, logo_filename = await self.build_now_playing_embed(player, state)
         view = await self.create_player_view(state, action_handler)
 
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
-                await message.edit(embed=embed, view=view)
-                return
+                if logo_filename and not self._message_has_attachment(message, logo_filename):
+                    await log(
+                        "INFO: Controller message has no platform logo attachment. "
+                        "Sending a new controller message."
+                    )
+                else:
+                    await message.edit(embed=embed, view=view)
+                    return
             except Exception:
                 await log("WARNING: Failed to update controller message. Sending a new one.")
 
-        message = await channel.send(embed=embed, view=view)
+        send_kwargs = {"embed": embed, "view": view}
+        logo_file = self._load_platform_logo_file(logo_filename)
+        if logo_file is not None:
+            send_kwargs["files"] = [logo_file]
+
+        message = await channel.send(**send_kwargs)
         await state.set_controller_message(channel_id, message.id)
 
     async def skip_to_next(self, player) -> bool:
