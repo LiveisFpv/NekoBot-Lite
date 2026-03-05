@@ -22,6 +22,8 @@ services:
     depends_on:
       lavalink:
         condition: service_healthy
+    networks:
+      - intenal
 
   lavalink:
     image: ghcr.io/lavalink-devs/lavalink:4
@@ -41,7 +43,10 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
-
+    networks:
+      - intenal
+networks:
+  intenal:
 #   db:
 #     image: postgres
 #     restart: always
