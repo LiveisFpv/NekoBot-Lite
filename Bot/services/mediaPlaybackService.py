@@ -147,24 +147,21 @@ class MediaPlaybackService:
             return None
         return discord.File(str(logo_path), filename=filename)
 
-    @classmethod
-    def _load_all_platform_logo_files(cls) -> list[discord.File]:
-        files: list[discord.File] = []
-        seen_filenames: set[str] = set()
-        for style in cls.PLATFORM_STYLES.values():
-            filename = style.logo_filename
-            if not filename or filename in seen_filenames:
-                continue
-            file_obj = cls._load_platform_logo_file(filename)
-            if file_obj is not None:
-                files.append(file_obj)
-                seen_filenames.add(filename)
-        return files
-
     @staticmethod
     def _message_has_attachment(message, filename: str) -> bool:
         attachments = getattr(message, "attachments", [])
         return any(getattr(item, "filename", "") == filename for item in attachments)
+
+    @staticmethod
+    def _unique_filenames(*filenames: str | None) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for filename in filenames:
+            if not filename or filename in seen:
+                continue
+            seen.add(filename)
+            result.append(filename)
+        return result
 
     @staticmethod
     def _get_track_artist(track) -> str:
@@ -486,7 +483,7 @@ class MediaPlaybackService:
         embed = discord.Embed(
             title="Музыкальный плеер",
             description=f"**Сейчас играет:** {self._format_track_reference(current_track)}",
-            color=playback_style.color,
+            color=source_style.color,
         )
         embed.add_field(name="Следующий трек", value=self._format_track_reference(next_track), inline=False)
         embed.add_field(name="В очереди", value=str(queue_size), inline=True)
@@ -503,16 +500,21 @@ class MediaPlaybackService:
             embed.set_footer(text=footer_text)
 
         if source_logo_url:
-            embed.set_author(name=f"Добавлено из · {source_style.display_name}", icon_url=source_logo_url)
+            embed.set_author(name=f"{source_style.display_name}", icon_url=source_logo_url)
         else:
-            embed.set_author(name=f"Добавлено из · {source_style.display_name}")
+            embed.set_author(name=f"{source_style.display_name}")
 
         if artwork_url and self.is_url(artwork_url):
             embed.set_thumbnail(url=artwork_url)
         elif source_logo_url:
             embed.set_thumbnail(url=source_logo_url)
 
-        return embed
+        required_logo_filenames = self._unique_filenames(
+            source_logo_filename,
+            playback_logo_filename,
+        )
+
+        return embed, required_logo_filenames
 
     async def publish_now_playing(self, bot, guild_id: int, player, state: MediaPlayer, action_handler):
         channel_id, message_id = await state.get_controller_message()
@@ -523,19 +525,40 @@ class MediaPlaybackService:
         if channel is None:
             return
 
-        embed = await self.build_now_playing_embed(player, state)
+        embed, required_logo_filenames = await self.build_now_playing_embed(player, state)
         view = await self.create_player_view(state, action_handler)
 
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
+                missing_files: list[discord.File] = []
+                for filename in required_logo_filenames:
+                    if self._message_has_attachment(message, filename):
+                        continue
+                    file_obj = self._load_platform_logo_file(filename)
+                    if file_obj is not None:
+                        missing_files.append(file_obj)
+
+                if missing_files:
+                    attachments = list(getattr(message, "attachments", []))
+                    await message.edit(
+                        embed=embed,
+                        view=view,
+                        attachments=[*attachments, *missing_files],
+                    )
+                    return
+
                 await message.edit(embed=embed, view=view)
                 return
             except Exception:
                 await log("WARNING: Failed to update controller message. Sending a new one.")
 
         send_kwargs = {"embed": embed, "view": view}
-        logo_files = self._load_all_platform_logo_files()
+        logo_files: list[discord.File] = []
+        for filename in required_logo_filenames:
+            file_obj = self._load_platform_logo_file(filename)
+            if file_obj is not None:
+                logo_files.append(file_obj)
         if logo_files:
             send_kwargs["files"] = logo_files
 

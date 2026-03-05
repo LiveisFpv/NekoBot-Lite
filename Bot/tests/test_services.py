@@ -505,13 +505,15 @@ async def test_media_playback_service_build_embed_falls_back_to_platform_logo_th
         lambda platform_id: "soundcloud-logo.png" if platform_id == "soundcloud" else "youtube-logo.png",
     )
 
-    embed = await service.build_now_playing_embed(player, state)
+    embed, required_logos = await service.build_now_playing_embed(player, state)
 
     assert embed.thumbnail.url == "attachment://soundcloud-logo.png"
-    assert embed.author.name == "Добавлено из · SoundCloud"
+    assert embed.author.name == "SoundCloud"
     assert embed.author.icon_url == "attachment://soundcloud-logo.png"
     assert embed.footer.text.startswith("Воспроизводится через · YouTube")
     assert embed.footer.icon_url == "attachment://youtube-logo.png"
+    assert set(required_logos) == {"soundcloud-logo.png", "youtube-logo.png"}
+    assert int(embed.color) == MediaPlaybackService.get_platform_style("soundcloud").color
 
 
 @pytest.mark.asyncio
@@ -525,13 +527,14 @@ async def test_media_playback_service_build_embed_prefers_track_artwork(monkeypa
     )
     player.current = track
     state = MediaPlayer()
-    await state.set_track_platforms(track, added_from="youtube", playback_via="youtube")
+    await state.set_track_platforms(track, added_from="soundcloud", playback_via="youtube")
 
     monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
 
-    embed = await service.build_now_playing_embed(player, state)
+    embed, required_logos = await service.build_now_playing_embed(player, state)
 
     assert embed.thumbnail.url == "https://img.example.com/artwork.png"
+    assert set(required_logos) == {"youtube-logo.png"}
 
 
 @pytest.mark.asyncio
@@ -685,15 +688,15 @@ async def test_media_playback_service_publish_now_playing_sends_new_message_with
     channel = DummyChannel()
     bot = DummyBot(channel)
 
-    monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
     monkeypatch.setattr(
         service,
-        "_load_all_platform_logo_files",
-        lambda: [
-            SimpleNamespace(filename="youtube-logo.png"),
-            SimpleNamespace(filename="soundcloud-logo.png"),
-            SimpleNamespace(filename="spotify-logo.png"),
-        ],
+        "_resolve_logo_filename",
+        lambda platform_id: "soundcloud-logo.png" if platform_id == "soundcloud" else "youtube-logo.png",
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_platform_logo_file",
+        lambda filename: SimpleNamespace(filename=filename),
     )
 
     await service.publish_now_playing(
@@ -710,8 +713,7 @@ async def test_media_playback_service_publish_now_playing_sends_new_message_with
     sent_message = channel.messages[message_id]
     assert {item.filename for item in sent_message.attachments} == {
         "youtube-logo.png",
-        "soundcloud-logo.png",
-        "spotify-logo.png",
+        "youtube-logo.png",
     }
 
 
