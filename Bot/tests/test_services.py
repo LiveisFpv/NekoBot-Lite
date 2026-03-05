@@ -335,6 +335,18 @@ def test_spotify_service_parse_spotify_url_track_playlist_album():
     assert ref_album.entity_id == "alb123"
 
 
+def test_spotify_service_reads_proxy_env(monkeypatch):
+    monkeypatch.setenv("SPOTIFY_PROXY_URL", "http://proxy.example:3128")
+    monkeypatch.setenv("SPOTIFY_PROXY_USERNAME", "user1")
+    monkeypatch.setenv("SPOTIFY_PROXY_PASSWORD", "pass1")
+
+    service = SpotifyService(client_id="client", client_secret="secret")
+
+    assert service.http_service.proxy_url == "http://proxy.example:3128"
+    assert service.http_service.proxy_username == "user1"
+    assert service.http_service.proxy_password == "pass1"
+
+
 @pytest.mark.asyncio
 async def test_spotify_service_resolve_for_enqueue_requires_credentials():
     service = SpotifyService(

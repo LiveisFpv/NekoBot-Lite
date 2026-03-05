@@ -116,6 +116,9 @@ Spotify:
 
 - `SPOTIFY_CLIENT_ID`
 - `SPOTIFY_CLIENT_SECRET`
+- `SPOTIFY_PROXY_URL` (optional, HTTP proxy URL for Spotify API requests)
+- `SPOTIFY_PROXY_USERNAME` (optional)
+- `SPOTIFY_PROXY_PASSWORD` (optional)
 
 Yandex Music:
 

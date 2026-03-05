@@ -39,11 +39,19 @@ class SpotifyService:
         client_id: str | None = None,
         client_secret: str | None = None,
     ):
-        self.http_service = http_service or HttpService()
+        self.http_service = http_service or HttpService(
+            proxy_url=self._get_env_str("SPOTIFY_PROXY_URL") or None,
+            proxy_username=self._get_env_str("SPOTIFY_PROXY_USERNAME") or None,
+            proxy_password=os.getenv("SPOTIFY_PROXY_PASSWORD", ""),
+        )
         self.client_id = (client_id or os.getenv("SPOTIFY_CLIENT_ID", "")).strip()
         self.client_secret = (client_secret or os.getenv("SPOTIFY_CLIENT_SECRET", "")).strip()
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
+
+    @staticmethod
+    def _get_env_str(name: str) -> str:
+        return str(os.getenv(name, "")).strip()
 
     @staticmethod
     def is_spotify_url(value: str) -> bool:
