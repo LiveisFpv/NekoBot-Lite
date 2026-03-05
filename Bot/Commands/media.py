@@ -318,7 +318,7 @@ class MediaCommands(commands.Cog):
         await self.playback_service.apply_queue_mode(player, state)
 
         try:
-            result = await self.playback_service.enqueue_query(player, query)
+            result = await self.playback_service.enqueue_query(player, query, state)
         except Exception as exc:
             await log(f"ERROR: enqueue_query failed: {exc}")
             await self._send_ctx_message(ctx, "Не удалось загрузить трек по запросу.")
@@ -336,7 +336,7 @@ class MediaCommands(commands.Cog):
         else:
             await self._send_ctx_message(ctx, f"Найден трек: {result['title']}")
 
-        await self.playback_service.start_if_idle(player)
+        await self.playback_service.start_if_idle(player, state)
 
     @commands.hybrid_command(name="skip", help="Skip current track")
     async def skip(self, ctx=Context):

@@ -279,6 +279,21 @@ async def test_media_player_status_snapshot():
 
 
 @pytest.mark.asyncio
+async def test_media_player_track_platform_meta_roundtrip():
+    state = MediaPlayer()
+    track = DummyTrack("Now")
+
+    await state.set_track_platforms(track, added_from="soundcloud", playback_via="youtube")
+    added_from, playback_via = await state.get_track_platforms(track)
+
+    assert added_from == "soundcloud"
+    assert playback_via == "youtube"
+
+    await state.clear_track_platforms(track)
+    assert await state.get_track_platforms(track) == ("unknown", "unknown")
+
+
+@pytest.mark.asyncio
 async def test_media_playback_service_enqueue_playlist(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()
@@ -359,6 +374,15 @@ def test_media_playback_service_get_platform_logo_filename():
     assert service.get_platform_logo_filename("unknown") is None
 
 
+def test_media_playback_service_detect_source_platform_from_query():
+    service = MediaPlaybackService()
+
+    assert service.detect_source_platform_from_query("https://soundcloud.com/a/b") == "soundcloud"
+    assert service.detect_source_platform_from_query("https://youtube.com/watch?v=abc") == "youtube"
+    assert service.detect_source_platform_from_query("https://open.spotify.com/track/123") == "spotify"
+    assert service.detect_source_platform_from_query("artist - song") == "youtube"
+
+
 def test_media_playback_service_is_soundcloud_url():
     service = MediaPlaybackService()
 
@@ -408,6 +432,7 @@ async def test_media_playback_service_resolve_track_for_playback_uses_youtube_fa
 async def test_media_playback_service_enqueue_single_track_replaces_soundcloud_preview(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()
+    state = MediaPlayer()
     preview_track = DummyTrack(
         "SC Preview",
         uri="https://soundcloud.com/artist/track",
@@ -424,7 +449,7 @@ async def test_media_playback_service_enqueue_single_track_replaces_soundcloud_p
     resolver_mock = AsyncMock(return_value=fallback_track)
     monkeypatch.setattr(service, "resolve_track_for_playback", resolver_mock)
 
-    result = await service.enqueue_query(player, "https://soundcloud.com/artist/track")
+    result = await service.enqueue_query(player, "https://soundcloud.com/artist/track", state)
 
     assert result["title"] == "Fallback Song"
     assert list(player.queue)[0].title == "Fallback Song"
@@ -432,6 +457,7 @@ async def test_media_playback_service_enqueue_single_track_replaces_soundcloud_p
         preview_track,
         force_soundcloud_fallback=True,
     )
+    assert await state.get_track_platforms(fallback_track) == ("soundcloud", "youtube")
 
 
 @pytest.mark.asyncio
@@ -468,33 +494,43 @@ async def test_media_playback_service_resolve_tracks_uses_youtube_music_for_text
 async def test_media_playback_service_build_embed_falls_back_to_platform_logo_thumbnail(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()
-    player.current = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
+    track = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
+    player.current = track
     state = MediaPlayer()
+    await state.set_track_platforms(track, added_from="soundcloud", playback_via="youtube")
 
-    monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
+    monkeypatch.setattr(
+        service,
+        "_resolve_logo_filename",
+        lambda platform_id: "soundcloud-logo.png" if platform_id == "soundcloud" else "youtube-logo.png",
+    )
 
-    embed, logo_filename = await service.build_now_playing_embed(player, state)
+    embed = await service.build_now_playing_embed(player, state)
 
-    assert logo_filename == "youtube-logo.png"
-    assert embed.thumbnail.url == "attachment://youtube-logo.png"
+    assert embed.thumbnail.url == "attachment://soundcloud-logo.png"
+    assert embed.author.name == "Добавлено из · SoundCloud"
+    assert embed.author.icon_url == "attachment://soundcloud-logo.png"
+    assert embed.footer.text.startswith("Воспроизводится через · YouTube")
+    assert embed.footer.icon_url == "attachment://youtube-logo.png"
 
 
 @pytest.mark.asyncio
 async def test_media_playback_service_build_embed_prefers_track_artwork(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()
-    player.current = DummyTrack(
+    track = DummyTrack(
         "Now",
         uri="https://youtube.com/watch?v=abc",
         artwork="https://img.example.com/artwork.png",
     )
+    player.current = track
     state = MediaPlayer()
+    await state.set_track_platforms(track, added_from="youtube", playback_via="youtube")
 
     monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
 
-    embed, logo_filename = await service.build_now_playing_embed(player, state)
+    embed = await service.build_now_playing_embed(player, state)
 
-    assert logo_filename == "youtube-logo.png"
     assert embed.thumbnail.url == "https://img.example.com/artwork.png"
 
 
@@ -572,11 +608,13 @@ async def test_media_playback_service_back_button_plays_previous():
 async def test_media_playback_service_publish_now_playing_updates_existing(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()
-    player.current = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
+    track = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
+    player.current = track
     player.queue.put(DummyTrack("Next"))
 
     state = MediaPlayer()
     await state.set_controller_message(123, 777)
+    await state.set_track_platforms(track, added_from="youtube", playback_via="youtube")
 
     channel = DummyChannel()
     existing = DummyMessage(777, attachments=[SimpleNamespace(filename="youtube-logo.png")])
@@ -603,10 +641,12 @@ async def test_media_playback_service_publish_now_playing_updates_existing_when_
 ):
     service = MediaPlaybackService()
     player = DummyPlayer()
-    player.current = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
+    track = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
+    player.current = track
 
     state = MediaPlayer()
     await state.set_controller_message(123, 777)
+    await state.set_track_platforms(track, added_from="youtube", playback_via="youtube")
 
     channel = DummyChannel()
     existing = DummyMessage(777, attachments=[])
@@ -635,10 +675,12 @@ async def test_media_playback_service_publish_now_playing_sends_new_message_with
 ):
     service = MediaPlaybackService()
     player = DummyPlayer()
-    player.current = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
+    track = DummyTrack("Now", uri="https://youtube.com/watch?v=abc")
+    player.current = track
 
     state = MediaPlayer()
     await state.set_controller_message(123, None)
+    await state.set_track_platforms(track, added_from="youtube", playback_via="youtube")
 
     channel = DummyChannel()
     bot = DummyBot(channel)
@@ -646,8 +688,12 @@ async def test_media_playback_service_publish_now_playing_sends_new_message_with
     monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "youtube-logo.png")
     monkeypatch.setattr(
         service,
-        "_load_platform_logo_file",
-        lambda filename: SimpleNamespace(filename=filename),
+        "_load_all_platform_logo_files",
+        lambda: [
+            SimpleNamespace(filename="youtube-logo.png"),
+            SimpleNamespace(filename="soundcloud-logo.png"),
+            SimpleNamespace(filename="spotify-logo.png"),
+        ],
     )
 
     await service.publish_now_playing(
@@ -661,6 +707,12 @@ async def test_media_playback_service_publish_now_playing_sends_new_message_with
     _, message_id = await state.get_controller_message()
     assert channel.sent_count == 1
     assert message_id is not None
+    sent_message = channel.messages[message_id]
+    assert {item.filename for item in sent_message.attachments} == {
+        "youtube-logo.png",
+        "soundcloud-logo.png",
+        "spotify-logo.png",
+    }
 
 
 def test_lavalink_service_from_env(monkeypatch):

@@ -11,6 +11,7 @@ class MediaPlayer:
         self.loop_playlist = False
         self.controller_channel_id: int | None = None
         self.controller_message_id: int | None = None
+        self._track_platform_meta: dict[int, dict[str, str]] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -117,6 +118,7 @@ class MediaPlayer:
             self.loop = False
             self.loop_playlist = False
             self.controller_message_id = None
+            self._track_platform_meta.clear()
             # Keep channel id to allow follow-up messages in same channel.
         if queue is not None:
             queue.clear()
@@ -130,3 +132,39 @@ class MediaPlayer:
         queue_size = len(queue_items)
 
         return current_title, next_title, queue_size
+
+    async def set_track_platforms(
+        self,
+        track: Any,
+        *,
+        added_from: str,
+        playback_via: str,
+    ) -> None:
+        if track is None:
+            return
+
+        key = id(track)
+        async with self._lock:
+            self._track_platform_meta[key] = {
+                "added_from": str(added_from or "unknown"),
+                "playback_via": str(playback_via or "unknown"),
+            }
+
+    async def get_track_platforms(self, track: Any) -> tuple[str, str]:
+        if track is None:
+            return "unknown", "unknown"
+
+        key = id(track)
+        async with self._lock:
+            values = self._track_platform_meta.get(key)
+            if not values:
+                return "unknown", "unknown"
+            return values.get("added_from", "unknown"), values.get("playback_via", "unknown")
+
+    async def clear_track_platforms(self, track: Any) -> None:
+        if track is None:
+            return
+
+        key = id(track)
+        async with self._lock:
+            self._track_platform_meta.pop(key, None)

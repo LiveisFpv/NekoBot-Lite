@@ -147,6 +147,20 @@ class MediaPlaybackService:
             return None
         return discord.File(str(logo_path), filename=filename)
 
+    @classmethod
+    def _load_all_platform_logo_files(cls) -> list[discord.File]:
+        files: list[discord.File] = []
+        seen_filenames: set[str] = set()
+        for style in cls.PLATFORM_STYLES.values():
+            filename = style.logo_filename
+            if not filename or filename in seen_filenames:
+                continue
+            file_obj = cls._load_platform_logo_file(filename)
+            if file_obj is not None:
+                files.append(file_obj)
+                seen_filenames.add(filename)
+        return files
+
     @staticmethod
     def _message_has_attachment(message, filename: str) -> bool:
         attachments = getattr(message, "attachments", [])
@@ -248,6 +262,68 @@ class MediaPlaybackService:
         return host == "soundcloud.com" or host.endswith(".soundcloud.com")
 
     @staticmethod
+    def is_youtube_url(value: str) -> bool:
+        parsed = urlparse((value or "").strip())
+        if parsed.scheme not in {"http", "https"}:
+            return False
+
+        host = (parsed.netloc or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+
+        return host in {"youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
+
+    @staticmethod
+    def is_spotify_url(value: str) -> bool:
+        parsed = urlparse((value or "").strip())
+        if parsed.scheme not in {"http", "https"}:
+            return False
+
+        host = (parsed.netloc or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+
+        return host == "spotify.com" or host.endswith(".spotify.com")
+
+    def detect_source_platform_from_query(self, query: str) -> str:
+        candidate = (query or "").strip()
+        if self.is_soundcloud_url(candidate):
+            return "soundcloud"
+        if self.is_youtube_url(candidate):
+            return "youtube"
+        if self.is_spotify_url(candidate):
+            return "spotify"
+        return "youtube"
+
+    async def _attach_track_platform_meta(
+        self,
+        state: MediaPlayer | None,
+        original_track,
+        final_track,
+        *,
+        source_platform: str | None = None,
+    ) -> None:
+        if state is None or final_track is None:
+            return
+
+        if source_platform is None:
+            existing_added_from, _ = await state.get_track_platforms(original_track)
+            if existing_added_from != "unknown":
+                source_platform = existing_added_from
+            else:
+                source_platform = self.detect_platform_id(original_track)
+
+        playback_platform = self.detect_platform_id(final_track)
+        await state.set_track_platforms(
+            final_track,
+            added_from=source_platform,
+            playback_via=playback_platform,
+        )
+
+        if original_track is not None and original_track is not final_track:
+            await state.clear_track_platforms(original_track)
+
+    @staticmethod
     def normalize_query(value: str) -> str:
         candidate = (value or "").strip()
         parsed = urlparse(candidate)
@@ -296,9 +372,10 @@ class MediaPlaybackService:
         result = await wavelink.Playable.search(candidate, source=source)
         return result
 
-    async def enqueue_query(self, player, query: str):
+    async def enqueue_query(self, player, query: str, state: MediaPlayer | None = None):
         result = await self.resolve_tracks(query)
         force_soundcloud_fallback = self.is_soundcloud_url(query)
+        source_platform = self.detect_source_platform_from_query(query)
 
         if not result:
             return {"added": 0, "title": None, "is_playlist": False}
@@ -309,6 +386,12 @@ class MediaPlaybackService:
                 track = await self.resolve_track_for_playback(
                     original_track,
                     force_soundcloud_fallback=force_soundcloud_fallback,
+                )
+                await self._attach_track_platform_meta(
+                    state,
+                    original_track,
+                    track,
+                    source_platform=source_platform,
                 )
                 added += player.queue.put(track)
             return {
@@ -326,6 +409,12 @@ class MediaPlaybackService:
             first,
             force_soundcloud_fallback=force_soundcloud_fallback,
         )
+        await self._attach_track_platform_meta(
+            state,
+            tracks[0],
+            first,
+            source_platform=source_platform,
+        )
         added = player.queue.put(first)
         return {
             "added": added,
@@ -333,7 +422,7 @@ class MediaPlaybackService:
             "is_playlist": False,
         }
 
-    async def start_if_idle(self, player) -> bool:
+    async def start_if_idle(self, player, state: MediaPlayer | None = None) -> bool:
         if player.playing or player.paused or player.current is not None:
             return False
 
@@ -342,8 +431,9 @@ class MediaPlaybackService:
         except Exception:
             return False
 
-        next_track = await self.resolve_track_for_playback(next_track)
-        await player.play(next_track, volume=self.default_volume)
+        resolved_track = await self.resolve_track_for_playback(next_track)
+        await self._attach_track_platform_meta(state, next_track, resolved_track)
+        await player.play(resolved_track, volume=self.default_volume)
         return True
 
     async def apply_queue_mode(self, player, state: MediaPlayer):
@@ -378,34 +468,51 @@ class MediaPlaybackService:
         position_text = MediaPlayer.format_duration(getattr(player, "position", 0))
         progress_text = f"{position_text} / {duration_text}"
 
-        platform_id = self.detect_platform_id(current_track)
-        platform_style = self.get_platform_style(platform_id)
-        logo_filename = self._resolve_logo_filename(platform_id)
-        logo_url = f"attachment://{logo_filename}" if logo_filename else None
+        added_from_id, playback_via_id = await state.get_track_platforms(current_track)
+        if added_from_id == "unknown":
+            added_from_id = self.detect_platform_id(current_track)
+        if playback_via_id == "unknown":
+            playback_via_id = self.detect_platform_id(current_track)
+
+        source_style = self.get_platform_style(added_from_id)
+        playback_style = self.get_platform_style(playback_via_id)
+
+        source_logo_filename = self._resolve_logo_filename(added_from_id)
+        playback_logo_filename = self._resolve_logo_filename(playback_via_id)
+        source_logo_url = f"attachment://{source_logo_filename}" if source_logo_filename else None
+        playback_logo_url = f"attachment://{playback_logo_filename}" if playback_logo_filename else None
         artwork_url = self.get_track_artwork_url(current_track)
 
         embed = discord.Embed(
             title="Музыкальный плеер",
             description=f"**Сейчас играет:** {self._format_track_reference(current_track)}",
-            color=platform_style.color,
+            color=playback_style.color,
         )
         embed.add_field(name="Следующий трек", value=self._format_track_reference(next_track), inline=False)
-        embed.add_field(name="Платформа", value=platform_style.display_name, inline=True)
         embed.add_field(name="В очереди", value=str(queue_size), inline=True)
         embed.add_field(name="Прогресс", value=progress_text, inline=True)
-        embed.set_footer(text=f"Текущий трек: {current_title} | Далее: {next_title}")
+        embed.add_field(name="Добавлено из", value=source_style.display_name, inline=True)
 
-        if logo_url:
-            embed.set_author(name=f"Сейчас играет · {platform_style.display_name}", icon_url=logo_url)
+        footer_text = (
+            f"Воспроизводится через · {playback_style.display_name} | "
+            f"Текущий: {current_title} | Далее: {next_title}"
+        )
+        if playback_logo_url:
+            embed.set_footer(text=footer_text, icon_url=playback_logo_url)
         else:
-            embed.set_author(name=f"Сейчас играет · {platform_style.display_name}")
+            embed.set_footer(text=footer_text)
+
+        if source_logo_url:
+            embed.set_author(name=f"Добавлено из · {source_style.display_name}", icon_url=source_logo_url)
+        else:
+            embed.set_author(name=f"Добавлено из · {source_style.display_name}")
 
         if artwork_url and self.is_url(artwork_url):
             embed.set_thumbnail(url=artwork_url)
-        elif logo_url:
-            embed.set_thumbnail(url=logo_url)
+        elif source_logo_url:
+            embed.set_thumbnail(url=source_logo_url)
 
-        return embed, logo_filename
+        return embed
 
     async def publish_now_playing(self, bot, guild_id: int, player, state: MediaPlayer, action_handler):
         channel_id, message_id = await state.get_controller_message()
@@ -416,7 +523,7 @@ class MediaPlaybackService:
         if channel is None:
             return
 
-        embed, logo_filename = await self.build_now_playing_embed(player, state)
+        embed = await self.build_now_playing_embed(player, state)
         view = await self.create_player_view(state, action_handler)
 
         if message_id:
@@ -428,9 +535,9 @@ class MediaPlaybackService:
                 await log("WARNING: Failed to update controller message. Sending a new one.")
 
         send_kwargs = {"embed": embed, "view": view}
-        logo_file = self._load_platform_logo_file(logo_filename)
-        if logo_file is not None:
-            send_kwargs["files"] = [logo_file]
+        logo_files = self._load_all_platform_logo_files()
+        if logo_files:
+            send_kwargs["files"] = logo_files
 
         message = await channel.send(**send_kwargs)
         await state.set_controller_message(channel_id, message.id)
@@ -450,8 +557,9 @@ class MediaPlaybackService:
         if current_track is not None:
             player.queue.put_at(0, current_track)
 
-        previous_track = await self.resolve_track_for_playback(previous_track)
-        await player.play(previous_track, replace=True, volume=self.default_volume)
+        resolved_track = await self.resolve_track_for_playback(previous_track)
+        await self._attach_track_platform_meta(state, previous_track, resolved_track)
+        await player.play(resolved_track, replace=True, volume=self.default_volume)
         return True
 
     async def handle_view_response(self, action: str, player, state: MediaPlayer) -> bool:
@@ -465,7 +573,7 @@ class MediaPlaybackService:
             elif player.playing:
                 await player.pause(True)
             else:
-                await self.start_if_idle(player)
+                await self.start_if_idle(player, state)
         elif action == "loop":
             _, loop_all = await state.get_loop_flags()
             await state.set_loop_flags(loop_playlist=not loop_all)
@@ -489,7 +597,7 @@ class MediaPlaybackService:
 
         return handled
 
-    async def handle_track_exception(self, player):
+    async def handle_track_exception(self, player, state: MediaPlayer | None = None):
         await log("WARNING: Track exception received, attempting to continue queue.")
         if not player.queue:
             return
@@ -499,5 +607,6 @@ class MediaPlaybackService:
         except Exception:
             return
 
-        next_track = await self.resolve_track_for_playback(next_track)
-        await player.play(next_track, volume=self.default_volume)
+        resolved_track = await self.resolve_track_for_playback(next_track)
+        await self._attach_track_platform_meta(state, next_track, resolved_track)
+        await player.play(resolved_track, volume=self.default_volume)
