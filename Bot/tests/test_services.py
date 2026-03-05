@@ -36,8 +36,11 @@ class DummyHttpService:
         self.text_payload = text_payload
         self.json_by_url = dict(json_by_url or {})
         self.post_json_payload = post_json_payload or {}
+        self.last_get_json_url = None
+        self.last_post_form_url = None
 
     async def get_json(self, url: str, headers=None):
+        self.last_get_json_url = url
         if url in self.json_by_url:
             payload = self.json_by_url[url]
             if isinstance(payload, list):
@@ -49,6 +52,7 @@ class DummyHttpService:
         return self.text_payload or ""
 
     async def post_form_json(self, url: str, data=None, headers=None):
+        self.last_post_form_url = url
         return self.post_json_payload
 
 
@@ -345,6 +349,44 @@ def test_spotify_service_reads_proxy_env(monkeypatch):
     assert service.http_service.proxy_url == "http://proxy.example:3128"
     assert service.http_service.proxy_username == "user1"
     assert service.http_service.proxy_password == "pass1"
+
+
+@pytest.mark.asyncio
+async def test_spotify_service_applies_market_to_playlist_tracks_request(monkeypatch):
+    monkeypatch.setenv("SPOTIFY_MARKET", "US")
+    playlist_id = "PL123"
+    expected_url = (
+        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+        "?offset=0&limit=50&additional_types=track&market=US"
+    )
+    http_service = DummyHttpService(
+        post_json_payload={"access_token": "token", "expires_in": 3600},
+        json_by_url={
+            expected_url: {
+                "items": [],
+                "next": None,
+            }
+        },
+    )
+    service = SpotifyService(
+        http_service=http_service,
+        client_id="client",
+        client_secret="secret",
+    )
+
+    queries, next_cursor = await service.fetch_deferred_queries(
+        {
+            "kind": "playlist",
+            "entity_id": playlist_id,
+            "display_title": "Playlist",
+            "offset": 0,
+        },
+        batch_size=50,
+    )
+
+    assert queries == []
+    assert next_cursor is None
+    assert http_service.last_get_json_url == expected_url
 
 
 @pytest.mark.asyncio

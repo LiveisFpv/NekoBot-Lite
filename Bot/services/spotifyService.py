@@ -4,9 +4,9 @@ import base64
 import os
 import time
 from dataclasses import dataclass
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
-from services.httpService import HttpService
+from services.httpService import HttpRequestError, HttpService
 
 
 class SpotifyIntegrationError(Exception):
@@ -46,6 +46,8 @@ class SpotifyService:
         )
         self.client_id = (client_id or os.getenv("SPOTIFY_CLIENT_ID", "")).strip()
         self.client_secret = (client_secret or os.getenv("SPOTIFY_CLIENT_SECRET", "")).strip()
+        market = self._get_env_str("SPOTIFY_MARKET").upper()
+        self.market = market if len(market) == 2 else ""
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
 
@@ -115,9 +117,12 @@ class SpotifyService:
                 headers={"Authorization": f"Basic {basic}"},
             )
         except Exception as exc:
+            details = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, HttpRequestError):
+                details = f"{type(exc).__name__}: status={exc.status}, body={exc.body[:300]}"
             raise SpotifyApiError(
                 "Failed to fetch Spotify access token: "
-                f"{type(exc).__name__}: {exc}"
+                f"{details}"
             ) from exc
 
         token = str(payload.get("access_token") or "").strip()
@@ -133,13 +138,42 @@ class SpotifyService:
         token = await self._get_access_token()
         return {"Authorization": f"Bearer {token}"}
 
+    def _with_market(self, url: str) -> str:
+        if not self.market:
+            return url
+        parsed = urlparse(url)
+        query_items = parse_qsl(parsed.query, keep_blank_values=True)
+        query_keys = {key for key, _ in query_items}
+        if "market" in query_keys or "from_token" in query_keys:
+            return url
+        query_items.append(("market", self.market))
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                urlencode(query_items),
+                parsed.fragment,
+            )
+        )
+
     async def _get_json(self, url: str) -> dict:
+        request_url = self._with_market(url)
         headers = await self._auth_headers()
         try:
-            payload = await self.http_service.get_json(url, headers=headers)
+            payload = await self.http_service.get_json(request_url, headers=headers)
         except Exception as exc:
+            details = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, HttpRequestError):
+                details = f"{type(exc).__name__}: status={exc.status}, body={exc.body[:300]}"
+                if exc.status == 403:
+                    details += (
+                        " | hint: playlist may be unavailable for current app flow/region; "
+                        "try SPOTIFY_MARKET=US or OAuth user token for private/collab playlists"
+                    )
             raise SpotifyApiError(
-                f"Spotify API request failed: {url} ({type(exc).__name__}: {exc})"
+                f"Spotify API request failed: {request_url} ({details})"
             ) from exc
         return payload if isinstance(payload, dict) else {}
 

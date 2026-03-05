@@ -119,6 +119,7 @@ Spotify:
 - `SPOTIFY_PROXY_URL` (optional, HTTP proxy URL for Spotify API requests)
 - `SPOTIFY_PROXY_USERNAME` (optional)
 - `SPOTIFY_PROXY_PASSWORD` (optional)
+- `SPOTIFY_MARKET` (optional, 2-letter market like `US` to improve playlist availability in client-credentials flow)
 
 Yandex Music:
 

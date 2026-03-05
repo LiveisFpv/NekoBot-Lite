@@ -4,6 +4,14 @@ except Exception:  # pragma: no cover - optional import guard for local environm
     aiohttp = None
 
 
+class HttpRequestError(Exception):
+    def __init__(self, *, status: int, url: str, body: str):
+        super().__init__(f"HTTP {status} for {url}: {body[:500]}")
+        self.status = status
+        self.url = url
+        self.body = body
+
+
 class HttpService:
     def __init__(
         self,
@@ -34,7 +42,9 @@ class HttpService:
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, headers=headers, **self._proxy_kwargs()) as response:
-                response.raise_for_status()
+                if response.status >= 400:
+                    body = await response.text()
+                    raise HttpRequestError(status=response.status, url=url, body=body)
                 return await response.json(content_type=None)
 
     async def get_text(self, url: str, headers: dict | None = None) -> str:
@@ -43,7 +53,9 @@ class HttpService:
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, headers=headers, **self._proxy_kwargs()) as response:
-                response.raise_for_status()
+                if response.status >= 400:
+                    body = await response.text()
+                    raise HttpRequestError(status=response.status, url=url, body=body)
                 return await response.text()
 
     async def post_form_json(self, url: str, data: dict, headers: dict | None = None):
@@ -61,5 +73,7 @@ class HttpService:
                 headers=request_headers,
                 **self._proxy_kwargs(),
             ) as response:
-                response.raise_for_status()
+                if response.status >= 400:
+                    body = await response.text()
+                    raise HttpRequestError(status=response.status, url=url, body=body)
                 return await response.json(content_type=None)
