@@ -107,7 +107,10 @@ class SpotifyService:
                 headers={"Authorization": f"Basic {basic}"},
             )
         except Exception as exc:
-            raise SpotifyApiError("Failed to fetch Spotify access token.") from exc
+            raise SpotifyApiError(
+                "Failed to fetch Spotify access token: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
         token = str(payload.get("access_token") or "").strip()
         expires_in = int(payload.get("expires_in") or 3600)
@@ -127,7 +130,9 @@ class SpotifyService:
         try:
             payload = await self.http_service.get_json(url, headers=headers)
         except Exception as exc:
-            raise SpotifyApiError(f"Spotify API request failed: {url}") from exc
+            raise SpotifyApiError(
+                f"Spotify API request failed: {url} ({type(exc).__name__}: {exc})"
+            ) from exc
         return payload if isinstance(payload, dict) else {}
 
     @staticmethod

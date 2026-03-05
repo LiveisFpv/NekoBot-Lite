@@ -403,7 +403,16 @@ class MediaCommands(commands.Cog):
         try:
             result = await self.playback_service.enqueue_query(player, query, state)
         except (SpotifyConfigError, SpotifyApiError) as exc:
-            await log(f"WARNING: Spotify enqueue failed: {exc}")
+            cause = getattr(exc, "__cause__", None)
+            cause_text = (
+                f"{type(cause).__name__}: {cause}" if cause is not None else "None"
+            )
+            error_line = (
+                "ERROR: Spotify enqueue failed "
+                f"(type={type(exc).__name__}, message={exc}, cause={cause_text})"
+            )
+            await log(error_line)
+            print(error_line)
             await self._send_ctx_message(
                 ctx,
                 "Spotify недоступен: проверьте SPOTIFY_CLIENT_ID/SPOTIFY_CLIENT_SECRET или повторите позже.",
