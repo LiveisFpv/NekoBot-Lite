@@ -41,6 +41,8 @@ class YandexMusicApiError(YandexMusicIntegrationError):
 class MediaPlaybackService:
     SOUNDCLOUD_PREVIEW_MIN_MS = 28000
     SOUNDCLOUD_PREVIEW_MAX_MS = 32000
+    YANDEX_AD_MIN_MS = 12000
+    YANDEX_AD_MAX_MS = 45000
     SPOTIFY_INITIAL_LIMIT = 100
 
     PLATFORM_STYLES: dict[str, PlatformStyle] = {
@@ -222,6 +224,40 @@ class MediaPlaybackService:
         if isinstance(length, (int, float)):
             duration = int(length)
             return self.SOUNDCLOUD_PREVIEW_MIN_MS <= duration <= self.SOUNDCLOUD_PREVIEW_MAX_MS
+
+        return False
+
+    def is_yandex_ad_track(self, track) -> bool:
+        if track is None or self.detect_platform_id(track) != "yandexmusic":
+            return False
+
+        for attr in ("is_ad", "isAd", "ad"):
+            value = getattr(track, attr, None)
+            if value is not None:
+                return bool(value)
+
+        plugin_info = getattr(track, "plugin_info", None) or getattr(track, "pluginInfo", None)
+        if isinstance(plugin_info, dict):
+            for key in ("is_ad", "isAd", "ad"):
+                if key in plugin_info:
+                    return bool(plugin_info.get(key))
+            info_type = str(plugin_info.get("type") or "").strip().lower()
+            if info_type == "ad":
+                return True
+
+        title = self._normalize_text(MediaPlayer.get_track_title(track))
+        if title in {"ad", "advertisement", "реклама"}:
+            return True
+        if "advertisement" in title or "реклама" in title:
+            return True
+
+        # Conservative duration heuristic to avoid false positives:
+        # only treat short unknown-title items as ads.
+        length = getattr(track, "length", None)
+        if isinstance(length, (int, float)):
+            duration = int(length)
+            if self.YANDEX_AD_MIN_MS <= duration <= self.YANDEX_AD_MAX_MS and title in {"unknown", ""}:
+                return True
 
         return False
 
@@ -496,6 +532,12 @@ class MediaPlaybackService:
             if self._is_playlist_result(result):
                 added = 0
                 for original_track in list(result):
+                    if self.is_yandex_ad_track(original_track):
+                        await log(
+                            "INFO: Skipped Yandex Music ad track while enqueueing playlist: "
+                            f"{MediaPlayer.get_track_title(original_track)}"
+                        )
+                        continue
                     track = await self.resolve_track_for_playback(original_track)
                     await self._attach_track_platform_meta(
                         state,
@@ -512,10 +554,11 @@ class MediaPlaybackService:
                 }
 
             tracks = list(result)
+            tracks = [item for item in tracks if not self.is_yandex_ad_track(item)]
             first = tracks[0] if tracks else None
             if first is None:
                 raise YandexMusicApiError(
-                    "Yandex Music URL returned empty track list."
+                    "Yandex Music URL returned no playable tracks."
                 )
 
             first = await self.resolve_track_for_playback(first)

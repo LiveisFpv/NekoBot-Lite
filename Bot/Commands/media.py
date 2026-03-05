@@ -358,6 +358,17 @@ class MediaCommands(commands.Cog):
         if player is None or player.guild is None:
             return
 
+        if self.playback_service.is_yandex_ad_track(payload.track):
+            await log(
+                "INFO: Yandex Music ad track detected on start, skipping: "
+                f"{MediaPlayer.get_track_title(payload.track)}"
+            )
+            try:
+                await player.skip(force=True)
+            except Exception as exc:
+                await log(f"WARNING: Failed to skip Yandex ad track: {exc}")
+            return
+
         guild_id = player.guild.id
         state = await self.get_player_state(guild_id)
         await state.push_history(payload.track)

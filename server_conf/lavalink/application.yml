@@ -56,9 +56,9 @@ plugins:
       yandexmusic: true
     yandexmusic:
       accessToken: ${YANDEX_TOKEN:}
-      playlistLoadLimit: 1
-      albumLoadLimit: 1
-      artistLoadLimit: 1
+      playlistLoadLimit: 6
+      albumLoadLimit: 6
+      artistLoadLimit: 6
     # proxy:
     #   url: ${YANDEX_PROXY_URL:}
     #   username: ${YANDEX_PROXY_USERNAME:}

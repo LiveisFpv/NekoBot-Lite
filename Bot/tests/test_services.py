@@ -136,12 +136,15 @@ class DummyTrack:
         length: int = 180000,
         source: str | None = None,
         artwork: str | None = None,
+        **extra_attrs,
     ):
         self.title = title
         self.uri = uri
         self.length = length
         self.source = source
         self.artwork = artwork
+        for key, value in extra_attrs.items():
+            setattr(self, key, value)
 
 
 class DummyPlaylist:
@@ -559,6 +562,48 @@ async def test_media_playback_service_enqueue_yandex_playlist(monkeypatch):
     assert result["added"] == 2
     first_track = list(player.queue)[0]
     assert await state.get_track_platforms(first_track) == ("yandexmusic", "yandexmusic")
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_yandex_playlist_skips_ads(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    state = MediaPlayer()
+    playlist = DummyPlaylist(
+        "YM List",
+        [
+            DummyTrack("Song A", uri="https://music.yandex.ru/album/1/track/10", source="yandexmusic"),
+            DummyTrack("Реклама", uri="https://music.yandex.ru/album/1/track/11", source="yandexmusic", length=30000),
+            DummyTrack("Song B", uri="https://music.yandex.ru/album/1/track/12", source="yandexmusic"),
+        ],
+    )
+
+    monkeypatch.setenv("YANDEX_TOKEN", "token")
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=playlist))
+
+    result = await service.enqueue_query(player, "https://music.yandex.ru/users/a/playlists/1", state)
+
+    assert result["added"] == 2
+    queue_titles = [item.title for item in list(player.queue)]
+    assert queue_titles == ["Song A", "Song B"]
+
+
+def test_media_playback_service_is_yandex_ad_track():
+    service = MediaPlaybackService()
+
+    regular = DummyTrack("Song", uri="https://music.yandex.ru/album/1/track/1", source="yandexmusic")
+    titled_ad = DummyTrack("Реклама", uri="https://music.yandex.ru/album/1/track/2", source="yandexmusic")
+    flagged_ad = DummyTrack(
+        "Something",
+        uri="https://music.yandex.ru/album/1/track/3",
+        source="yandexmusic",
+        plugin_info={"type": "ad"},
+    )
+
+    assert service.is_yandex_ad_track(regular) is False
+    assert service.is_yandex_ad_track(titled_ad) is True
+    assert service.is_yandex_ad_track(flagged_ad) is True
 
 
 @pytest.mark.asyncio
