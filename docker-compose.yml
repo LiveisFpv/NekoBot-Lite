@@ -33,7 +33,7 @@ services:
       spotify-tokener:
         condition: service_started
     environment:
-      - _JAVA_OPTIONS=-Xmx512M
+      - _JAVA_OPTIONS=-Xmx512M -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false
       - SERVER_PORT=2333
       - LAVALINK_SERVER_PASSWORD=${LAVALINK_PASSWORD:-youshallnotpass}
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
