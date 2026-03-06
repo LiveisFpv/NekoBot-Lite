@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import sys
-from collections import deque
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -20,9 +19,7 @@ from services.mediaPlaybackService import (
 )
 from services.mediaService import MediaPlayer
 from services.memeService import MemeService
-from services.spotifyService import SpotifyApiError, SpotifyConfigError, SpotifyService
-from services.httpService import HttpRequestError
-from Commands.media import MediaCommands, SpotifyBackfillJob
+from Commands.media import MediaCommands
 
 
 class DummyHttpService:
@@ -352,434 +349,6 @@ async def test_media_player_track_platform_meta_roundtrip():
     assert await state.get_track_platforms(track) == ("unknown", "unknown")
 
 
-def test_spotify_service_parse_spotify_url_track_playlist_album_artist():
-    ref_track = SpotifyService.parse_spotify_url("https://open.spotify.com/track/abc123?si=zzz")
-    ref_playlist = SpotifyService.parse_spotify_url("https://open.spotify.com/playlist/pl123")
-    ref_album = SpotifyService.parse_spotify_url("https://open.spotify.com/album/alb123")
-    ref_artist = SpotifyService.parse_spotify_url("https://open.spotify.com/artist/art123")
-
-    assert ref_track.kind == "track"
-    assert ref_track.entity_id == "abc123"
-    assert ref_playlist.kind == "playlist"
-    assert ref_playlist.entity_id == "pl123"
-    assert ref_album.kind == "album"
-    assert ref_album.entity_id == "alb123"
-    assert ref_artist.kind == "artist"
-    assert ref_artist.entity_id == "art123"
-
-
-def test_spotify_service_reads_proxy_env(monkeypatch):
-    monkeypatch.setenv("SPOTIFY_PROXY_URL", "http://proxy.example:3128")
-    monkeypatch.setenv("SPOTIFY_PROXY_USERNAME", "user1")
-    monkeypatch.setenv("SPOTIFY_PROXY_PASSWORD", "pass1")
-
-    service = SpotifyService(client_id="client", client_secret="secret")
-
-    assert service.http_service.proxy_url == "http://proxy.example:3128"
-    assert service.http_service.proxy_username == "user1"
-    assert service.http_service.proxy_password == "pass1"
-
-
-@pytest.mark.asyncio
-async def test_spotify_service_applies_market_to_playlist_tracks_request(monkeypatch):
-    monkeypatch.setenv("SPOTIFY_MARKET", "US")
-    playlist_id = "PL123"
-    expected_url = (
-        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
-        "?offset=0&limit=50&additional_types=track&market=US"
-    )
-    http_service = DummyHttpService(
-        post_json_payload={"access_token": "token", "expires_in": 3600},
-        json_by_url={
-            expected_url: {
-                "items": [],
-                "next": None,
-            }
-        },
-    )
-    service = SpotifyService(
-        http_service=http_service,
-        client_id="client",
-        client_secret="secret",
-    )
-
-    queries, next_cursor = await service.fetch_deferred_queries(
-        {
-            "kind": "playlist",
-            "entity_id": playlist_id,
-            "display_title": "Playlist",
-            "offset": 0,
-        },
-        batch_size=50,
-    )
-
-    assert queries == []
-    assert next_cursor is None
-    assert http_service.last_get_json_url == expected_url
-
-
-@pytest.mark.asyncio
-async def test_spotify_service_resolve_for_enqueue_requires_credentials():
-    service = SpotifyService(
-        http_service=DummyHttpService(
-            post_json_payload={"access_token": "token", "expires_in": 3600},
-        ),
-        client_id="",
-        client_secret="",
-    )
-
-    with pytest.raises(SpotifyConfigError):
-        await service.resolve_for_enqueue("https://open.spotify.com/track/abc123")
-
-
-@pytest.mark.asyncio
-async def test_spotify_service_resolve_playlist_returns_initial_and_deferred():
-    def _playlist_items(start: int, count: int):
-        return [
-            {
-                "track": {
-                    "name": f"Song {idx}",
-                    "artists": [{"name": f"Artist {idx}"}],
-                    "is_local": False,
-                }
-            }
-            for idx in range(start, start + count)
-        ]
-
-    playlist_id = "PL123"
-    page_50_url = (
-        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
-        "?offset=50&limit=50&additional_types=track"
-    )
-    playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-    http_service = DummyHttpService(
-        post_json_payload={"access_token": "token", "expires_in": 3600},
-        json_by_url={
-            playlist_url: {
-                "name": "My Playlist",
-                "tracks": {
-                    "offset": 0,
-                    "items": _playlist_items(0, 50),
-                    "next": f"{page_50_url}",
-                    "total": 120,
-                },
-            },
-            page_50_url: {
-                "items": _playlist_items(50, 50),
-                "next": (
-                    f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
-                    "?offset=100&limit=50&additional_types=track"
-                ),
-                "total": 120,
-            },
-        },
-    )
-    service = SpotifyService(
-        http_service=http_service,
-        client_id="client",
-        client_secret="secret",
-    )
-
-    payload = await service.resolve_for_enqueue(
-        f"https://open.spotify.com/playlist/{playlist_id}",
-        initial_limit=100,
-    )
-
-    assert payload["kind"] == "playlist"
-    assert payload["display_title"] == "My Playlist"
-    assert len(payload["initial_queries"]) == 100
-    assert payload["initial_queries"][0] == "Artist 0 - Song 0"
-    assert payload["deferred_cursor"]["offset"] == 100
-    assert payload["deferred_cursor"]["total"] == 120
-    assert payload["total_tracks"] == 120
-    assert payload["partial"] is False
-    assert payload["partial_reason"] is None
-    assert page_50_url in http_service.get_json_calls
-    assert not any(
-        f"/playlists/{playlist_id}/tracks?offset=0&limit=50&additional_types=track" in call
-        for call in http_service.get_json_calls
-    )
-
-
-@pytest.mark.asyncio
-async def test_spotify_service_resolve_artist_returns_top_tracks(monkeypatch):
-    monkeypatch.setenv("SPOTIFY_MARKET", "US")
-    artist_id = "ART123"
-    http_service = DummyHttpService(
-        post_json_payload={"access_token": "token", "expires_in": 3600},
-        json_by_url={
-            f"https://api.spotify.com/v1/artists/{artist_id}?market=US": {"name": "Artist Name"},
-            f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks?market=US": {
-                "tracks": [
-                    {"name": "Song 1", "artists": [{"name": "Artist Name"}]},
-                    {"name": "Song 2", "artists": [{"name": "Artist Name"}]},
-                ]
-            },
-        },
-    )
-    service = SpotifyService(
-        http_service=http_service,
-        client_id="client",
-        client_secret="secret",
-    )
-
-    payload = await service.resolve_for_enqueue(
-        f"https://open.spotify.com/artist/{artist_id}",
-        initial_limit=5,
-    )
-
-    assert payload["kind"] == "artist"
-    assert payload["display_title"] == "Artist Name"
-    assert payload["deferred_cursor"] is None
-    assert payload["initial_queries"] == [
-        "Artist Name - Song 1",
-        "Artist Name - Song 2",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_spotify_service_resolve_playlist_without_next_uses_embedded_only():
-    playlist_id = "PL-ONLY"
-    playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-    http_service = DummyHttpService(
-        post_json_payload={"access_token": "token", "expires_in": 3600},
-        json_by_url={
-            playlist_url: {
-                "name": "Embedded Playlist",
-                "tracks": {
-                    "offset": 0,
-                    "items": [
-                        {
-                            "track": {
-                                "name": "Song A",
-                                "artists": [{"name": "Artist A"}],
-                                "is_local": False,
-                            }
-                        },
-                        {
-                            "track": {
-                                "name": "Song B",
-                                "artists": [{"name": "Artist B"}],
-                                "is_local": False,
-                            }
-                        },
-                    ],
-                    "next": None,
-                    "total": 2,
-                },
-            },
-        },
-    )
-    service = SpotifyService(
-        http_service=http_service,
-        client_id="client",
-        client_secret="secret",
-    )
-
-    payload = await service.resolve_for_enqueue(
-        f"https://open.spotify.com/playlist/{playlist_id}",
-        initial_limit=10,
-    )
-
-    assert payload["kind"] == "playlist"
-    assert payload["display_title"] == "Embedded Playlist"
-    assert payload["initial_queries"] == [
-        "Artist A - Song A",
-        "Artist B - Song B",
-    ]
-    assert payload["deferred_cursor"] is None
-    assert payload["total_tracks"] == 2
-    assert payload["partial"] is False
-    assert payload["partial_reason"] is None
-    assert all("/playlists/" not in url or "/tracks" not in url for url in http_service.get_json_calls)
-
-
-@pytest.mark.asyncio
-async def test_spotify_service_resolve_playlist_with_next_populates_deferred_cursor():
-    playlist_id = "PL-DEFER"
-    playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-    http_service = DummyHttpService(
-        post_json_payload={"access_token": "token", "expires_in": 3600},
-        json_by_url={
-            playlist_url: {
-                "name": "Deferred Playlist",
-                "tracks": {
-                    "offset": 0,
-                    "items": [
-                        {
-                            "track": {
-                                "name": "Song 1",
-                                "artists": [{"name": "Artist 1"}],
-                                "is_local": False,
-                            }
-                        },
-                        {
-                            "track": {
-                                "name": "Song 2",
-                                "artists": [{"name": "Artist 2"}],
-                                "is_local": False,
-                            }
-                        },
-                    ],
-                    "next": (
-                        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
-                        "?offset=2&limit=2&additional_types=track"
-                    ),
-                    "total": 5,
-                },
-            },
-        },
-    )
-    service = SpotifyService(
-        http_service=http_service,
-        client_id="client",
-        client_secret="secret",
-    )
-
-    payload = await service.resolve_for_enqueue(
-        f"https://open.spotify.com/playlist/{playlist_id}",
-        initial_limit=2,
-    )
-
-    assert payload["kind"] == "playlist"
-    assert payload["initial_queries"] == [
-        "Artist 1 - Song 1",
-        "Artist 2 - Song 2",
-    ]
-    assert payload["deferred_cursor"] == {
-        "kind": "playlist",
-        "entity_id": playlist_id,
-        "display_title": "Deferred Playlist",
-        "offset": 2,
-        "total": 5,
-    }
-    assert payload["total_tracks"] == 5
-    assert payload["partial"] is False
-    assert payload["partial_reason"] is None
-    assert all("/playlists/" not in url or "/tracks" not in url for url in http_service.get_json_calls)
-
-
-@pytest.mark.asyncio
-async def test_spotify_service_resolve_playlist_mid_pagination_forbidden_returns_partial():
-    playlist_id = "PL-PARTIAL"
-    playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-    tracks_url = (
-        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
-        "?offset=2&limit=8&additional_types=track"
-    )
-    http_service = DummyHttpService(
-        post_json_payload={"access_token": "token", "expires_in": 3600},
-        json_by_url={
-            playlist_url: {
-                "name": "Partial Playlist",
-                "tracks": {
-                    "offset": 0,
-                    "items": [
-                        {
-                            "track": {
-                                "name": "Song 1",
-                                "artists": [{"name": "Artist 1"}],
-                                "is_local": False,
-                            }
-                        },
-                        {
-                            "track": {
-                                "name": "Song 2",
-                                "artists": [{"name": "Artist 2"}],
-                                "is_local": False,
-                            }
-                        },
-                    ],
-                    "next": tracks_url,
-                    "total": 5,
-                },
-            },
-            tracks_url: HttpRequestError(
-                status=403,
-                url=tracks_url,
-                body='{"error":{"status":403,"message":"Forbidden"}}',
-            ),
-        },
-    )
-    service = SpotifyService(
-        http_service=http_service,
-        client_id="client",
-        client_secret="secret",
-    )
-
-    payload = await service.resolve_for_enqueue(
-        f"https://open.spotify.com/playlist/{playlist_id}",
-        initial_limit=10,
-    )
-
-    assert payload["kind"] == "playlist"
-    assert payload["display_title"] == "Partial Playlist"
-    assert payload["initial_queries"] == [
-        "Artist 1 - Song 1",
-        "Artist 2 - Song 2",
-    ]
-    assert payload["deferred_cursor"] is None
-    assert payload["total_tracks"] == 5
-    assert payload["partial"] is True
-    assert isinstance(payload["partial_reason"], str)
-    assert "HTTP 403" in payload["partial_reason"]
-
-
-@pytest.mark.asyncio
-async def test_spotify_service_resolve_playlist_mid_pagination_forbidden_without_queries_raises():
-    playlist_id = "PL-ERR"
-    playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-    tracks_url = (
-        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
-        "?offset=2&limit=10&additional_types=track"
-    )
-    http_service = DummyHttpService(
-        post_json_payload={"access_token": "token", "expires_in": 3600},
-        json_by_url={
-            playlist_url: {
-                "name": "No Queries",
-                "tracks": {
-                    "offset": 0,
-                    "items": [
-                        {
-                            "track": {
-                                "name": "Local 1",
-                                "artists": [{"name": "Artist 1"}],
-                                "is_local": True,
-                            }
-                        },
-                        {
-                            "track": {
-                                "name": "Local 2",
-                                "artists": [{"name": "Artist 2"}],
-                                "is_local": True,
-                            }
-                        },
-                    ],
-                    "next": tracks_url,
-                    "total": 5,
-                },
-            },
-            tracks_url: HttpRequestError(
-                status=403,
-                url=tracks_url,
-                body='{"error":{"status":403,"message":"Forbidden"}}',
-            ),
-        },
-    )
-    service = SpotifyService(
-        http_service=http_service,
-        client_id="client",
-        client_secret="secret",
-    )
-
-    with pytest.raises(SpotifyApiError):
-        await service.resolve_for_enqueue(
-            f"https://open.spotify.com/playlist/{playlist_id}",
-            initial_limit=10,
-        )
-
-
 @pytest.mark.asyncio
 async def test_media_playback_service_enqueue_playlist(monkeypatch):
     service = MediaPlaybackService()
@@ -813,25 +382,12 @@ async def test_media_playback_service_enqueue_single_track(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_enqueue_spotify_track_sets_meta(monkeypatch):
-    spotify_stub = SimpleNamespace(
-        resolve_for_enqueue=AsyncMock(
-            return_value={
-                "kind": "track",
-                "display_title": "Spotify Song",
-                "initial_queries": ["Artist - Spotify Song"],
-                "deferred_cursor": None,
-                "total_tracks": 1,
-                "partial": False,
-                "partial_reason": None,
-            }
-        )
-    )
-    service = MediaPlaybackService(spotify_service=spotify_stub)
+async def test_media_playback_service_enqueue_spotify_track_via_lavalink(monkeypatch):
+    service = MediaPlaybackService()
     player = DummyPlayer()
     state = MediaPlayer()
-    matched_track = DummyTrack("Matched", uri="https://youtube.com/watch?v=abc")
-    monkeypatch.setattr(service, "search_youtube_music_track", AsyncMock(return_value=matched_track))
+    resolved_track = DummyTrack("Spotify Resolved", uri="https://youtube.com/watch?v=abc")
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=[resolved_track]))
 
     result = await service.enqueue_query(
         player,
@@ -841,48 +397,26 @@ async def test_media_playback_service_enqueue_spotify_track_sets_meta(monkeypatc
 
     assert result["added"] == 1
     assert result["is_playlist"] is False
-    assert result["title"] == "Spotify Song"
-    assert result["spotify_total_tracks"] == 1
-    assert result["spotify_partial"] is False
-    assert result["spotify_partial_reason"] is None
-    assert await state.get_track_platforms(matched_track) == ("spotify", "youtube")
+    assert result["title"] == "Spotify Resolved"
+    assert await state.get_track_platforms(resolved_track) == ("spotify", "youtube")
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_enqueue_spotify_playlist_returns_deferred_and_skips_non_match(
+async def test_media_playback_service_enqueue_spotify_playlist_via_lavalink_sets_meta(
     monkeypatch,
 ):
-    log_mock = AsyncMock()
-    monkeypatch.setattr("services.mediaPlaybackService.log", log_mock)
-
-    spotify_stub = SimpleNamespace(
-        resolve_for_enqueue=AsyncMock(
-            return_value={
-                "kind": "playlist",
-                "display_title": "Spotify Mix",
-                "initial_queries": ["A - One", "B - Two"],
-                "deferred_cursor": {
-                    "kind": "playlist",
-                    "entity_id": "pl1",
-                    "display_title": "Spotify Mix",
-                    "offset": 100,
-                    "total": 250,
-                },
-                "total_tracks": 250,
-                "partial": False,
-                "partial_reason": None,
-            }
-        )
-    )
-    service = MediaPlaybackService(spotify_service=spotify_stub)
+    service = MediaPlaybackService()
     player = DummyPlayer()
     state = MediaPlayer()
-    matched_track = DummyTrack("One", uri="https://youtube.com/watch?v=one")
-    monkeypatch.setattr(
-        service,
-        "search_youtube_music_track",
-        AsyncMock(side_effect=[matched_track, None]),
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+    playlist = DummyPlaylist(
+        "Spotify Mix",
+        [
+            DummyTrack("One", uri="https://youtube.com/watch?v=one"),
+            DummyTrack("Two", uri="https://youtube.com/watch?v=two"),
+        ],
     )
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=playlist))
 
     result = await service.enqueue_query(
         player,
@@ -890,67 +424,26 @@ async def test_media_playback_service_enqueue_spotify_playlist_returns_deferred_
         state,
     )
 
-    assert result["added"] == 1
+    assert result["added"] == 2
     assert result["is_playlist"] is True
-    assert result["spotify_deferred_cursor"]["offset"] == 100
-    assert result["skipped"] == 1
-    assert result["spotify_total_tracks"] == 250
-    assert result["spotify_partial"] is False
-    assert result["spotify_partial_reason"] is None
-    log_line = str(log_mock.await_args_list[0].args[0])
-    assert "kind=playlist" in log_line
-    assert "total=250" in log_line
-    assert "partial=no" in log_line
-    assert await state.get_track_platforms(matched_track) == ("spotify", "youtube")
+    queue_items = list(player.queue)
+    assert len(queue_items) == 2
+    assert await state.get_track_platforms(queue_items[0]) == ("spotify", "youtube")
+    assert await state.get_track_platforms(queue_items[1]) == ("spotify", "youtube")
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_enqueue_spotify_playlist_partial_metadata(monkeypatch):
-    log_mock = AsyncMock()
-    monkeypatch.setattr("services.mediaPlaybackService.log", log_mock)
-
-    spotify_stub = SimpleNamespace(
-        resolve_for_enqueue=AsyncMock(
-            return_value={
-                "kind": "playlist",
-                "display_title": "Partial Mix",
-                "initial_queries": ["A - One"],
-                "deferred_cursor": None,
-                "total_tracks": 351,
-                "partial": True,
-                "partial_reason": "Spotify API pagination failed with HTTP 403",
-            }
-        )
-    )
-    service = MediaPlaybackService(spotify_service=spotify_stub)
+async def test_media_playback_service_enqueue_spotify_url_empty_result(monkeypatch):
+    service = MediaPlaybackService()
     player = DummyPlayer()
-    matched_track = DummyTrack("One", uri="https://youtube.com/watch?v=one")
-    monkeypatch.setattr(service, "search_youtube_music_track", AsyncMock(return_value=matched_track))
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=[]))
 
     result = await service.enqueue_query(
         player,
-        "https://open.spotify.com/playlist/pl1",
+        "https://open.spotify.com/album/alb1",
     )
 
-    assert result["added"] == 1
-    assert result["is_playlist"] is True
-    assert result["spotify_total_tracks"] == 351
-    assert result["spotify_partial"] is True
-    assert result["spotify_partial_reason"] == "Spotify API pagination failed with HTTP 403"
-    log_line = str(log_mock.await_args_list[0].args[0])
-    assert "partial=yes" in log_line
-
-
-@pytest.mark.asyncio
-async def test_media_playback_service_enqueue_spotify_raises_config_error():
-    spotify_stub = SimpleNamespace(
-        resolve_for_enqueue=AsyncMock(side_effect=SpotifyConfigError("missing credentials")),
-    )
-    service = MediaPlaybackService(spotify_service=spotify_stub)
-    player = DummyPlayer()
-
-    with pytest.raises(SpotifyConfigError):
-        await service.enqueue_query(player, "https://open.spotify.com/track/123")
+    assert result == {"added": 0, "title": None, "is_playlist": False}
 
 
 @pytest.mark.asyncio
@@ -1497,16 +990,13 @@ def test_media_commands_build_collection_added_message_complete():
         {
             "title": "Daily playlist",
             "added": 30,
-            "spotify_kind": "playlist",
-            "spotify_partial": False,
-            "spotify_total_tracks": 351,
         }
     )
 
     assert message == "Плейлист добавлен: **Daily playlist** (треков: 30)."
 
 
-def test_media_commands_build_collection_added_message_partial():
+def test_media_commands_build_collection_added_message_ignores_legacy_spotify_fields():
     message = MediaCommands.build_collection_added_message(
         {
             "title": "Daily playlist",
@@ -1517,95 +1007,14 @@ def test_media_commands_build_collection_added_message_partial():
         }
     )
 
-    assert message == (
-        "Плейлист добавлен: **Daily playlist** "
-        "(добавлено 30 из 351; Spotify API не отдал остальные треки)."
-    )
+    assert message == "Плейлист добавлен: **Daily playlist** (треков: 30)."
 
 
-@pytest.mark.asyncio
-async def test_media_commands_spotify_backfill_worker_fifo_order():
-    class FakeSpotifyService:
-        def __init__(self):
-            self.data = {
-                "job1": [["q1"], ["q2"]],
-                "job2": [["q3"]],
-            }
-
-        async def fetch_deferred_queries(self, cursor, batch_size=50):
-            key = cursor["key"]
-            idx = int(cursor["idx"])
-            batch = self.data[key][idx]
-            next_idx = idx + 1
-            next_cursor = {"key": key, "idx": next_idx} if next_idx < len(self.data[key]) else None
-            return batch, next_cursor
-
-    class FakePlaybackService:
-        def __init__(self, spotify_service):
-            self.spotify_service = spotify_service
-            self.calls = []
-
-        async def enqueue_spotify_queries(self, player, queries, *, state=None, source_platform="spotify"):
-            self.calls.append((player.tag, list(queries)))
-            return {"added": len(queries), "skipped": 0}
-
+def test_media_commands_has_no_spotify_backfill_state():
     commands = MediaCommands(SimpleNamespace())
-    fake_spotify = FakeSpotifyService()
-    fake_playback = FakePlaybackService(fake_spotify)
-    commands.playback_service = fake_playback
 
-    player = SimpleNamespace(connected=True, tag="P")
-    state = MediaPlayer()
-    guild_id = 101
-
-    commands._enqueue_spotify_backfill_job(
-        guild_id,
-        player=player,
-        state=state,
-        cursor={"key": "job1", "idx": 0},
-    )
-    commands._enqueue_spotify_backfill_job(
-        guild_id,
-        player=player,
-        state=state,
-        cursor={"key": "job2", "idx": 0},
-    )
-
-    await commands.spotify_backfill_tasks[guild_id]
-
-    assert fake_playback.calls == [
-        ("P", ["q1"]),
-        ("P", ["q2"]),
-        ("P", ["q3"]),
-    ]
-    assert guild_id not in commands.spotify_backfill_queues
-    assert guild_id not in commands.spotify_backfill_tasks
-
-
-@pytest.mark.asyncio
-async def test_media_commands_cancel_spotify_backfill_clears_state():
-    commands = MediaCommands(SimpleNamespace())
-    guild_id = 202
-    state = MediaPlayer()
-
-    commands.spotify_backfill_queues[guild_id] = deque(
-        [
-            SpotifyBackfillJob(
-                player=SimpleNamespace(connected=True),
-                state=state,
-                cursor={"key": "job", "idx": 0},
-            )
-        ]
-    )
-    task = asyncio.create_task(asyncio.sleep(5))
-    commands.spotify_backfill_tasks[guild_id] = task
-
-    commands._cancel_spotify_backfill(guild_id)
-    await asyncio.sleep(0)
-
-    assert guild_id not in commands.spotify_backfill_queues
-    assert guild_id not in commands.spotify_backfill_tasks
-    assert task.cancelled()
+    assert not hasattr(commands, "spotify_backfill_tasks")
+    assert not hasattr(commands, "spotify_backfill_queues")
 
 
 def test_lavalink_service_from_env(monkeypatch):

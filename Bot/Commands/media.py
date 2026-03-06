@@ -1,7 +1,5 @@
 ﻿import asyncio
 import os
-from collections import deque
-from dataclasses import dataclass
 
 from discord.ext import commands
 from discord.ext.commands import Context
@@ -13,7 +11,6 @@ from services.mediaPlaybackService import (
     YandexMusicConfigError,
 )
 from services.mediaService import MediaPlayer
-from services.spotifyService import SpotifyApiError, SpotifyConfigError
 from utils.utils import log
 
 try:
@@ -60,14 +57,6 @@ if wavelink is not None:
             else:
                 self._connection_event.set()
 
-
-@dataclass
-class SpotifyBackfillJob:
-    player: object
-    state: MediaPlayer
-    cursor: dict
-
-
 class MediaCommands(commands.Cog):
     DEFAULT_VOLUME = int(os.getenv("PLAYER_DEFAULT_VOLUME", "100"))
     VOICE_CONNECT_TIMEOUT = float(os.getenv("VOICE_CONNECT_TIMEOUT", "45"))
@@ -77,8 +66,6 @@ class MediaCommands(commands.Cog):
         self.bot = bot
         self.players: dict[int, MediaPlayer] = {}
         self.progress_tasks: dict[int, asyncio.Task] = {}
-        self.spotify_backfill_tasks: dict[int, asyncio.Task] = {}
-        self.spotify_backfill_queues: dict[int, deque[SpotifyBackfillJob]] = {}
         self.playback_service = MediaPlaybackService(default_volume=self.DEFAULT_VOLUME)
         self.lavalink_service = LavalinkService.from_env()
 
@@ -92,76 +79,6 @@ class MediaCommands(commands.Cog):
         self.progress_tasks[guild_id] = asyncio.create_task(
             self._progress_updater(guild_id, player, state)
         )
-
-    def _cancel_spotify_backfill(self, guild_id: int):
-        task = self.spotify_backfill_tasks.pop(guild_id, None)
-        if task is not None and not task.done():
-            task.cancel()
-        self.spotify_backfill_queues.pop(guild_id, None)
-
-    def _enqueue_spotify_backfill_job(self, guild_id: int, *, player, state: MediaPlayer, cursor: dict):
-        queue = self.spotify_backfill_queues.setdefault(guild_id, deque())
-        queue.append(
-            SpotifyBackfillJob(
-                player=player,
-                state=state,
-                cursor=dict(cursor),
-            )
-        )
-
-        task = self.spotify_backfill_tasks.get(guild_id)
-        if task is None or task.done():
-            self.spotify_backfill_tasks[guild_id] = asyncio.create_task(
-                self._spotify_backfill_worker(guild_id)
-            )
-
-    async def _spotify_backfill_worker(self, guild_id: int):
-        queue = self.spotify_backfill_queues.get(guild_id)
-        if queue is None:
-            return
-
-        try:
-            while queue:
-                job = queue[0]
-                cursor = dict(job.cursor)
-
-                while cursor:
-                    if not getattr(job.player, "connected", False):
-                        cursor = {}
-                        break
-
-                    queries, next_cursor = await self.playback_service.spotify_service.fetch_deferred_queries(
-                        cursor,
-                        batch_size=50,
-                    )
-                    if queries:
-                        batch_stats = await self.playback_service.enqueue_spotify_queries(
-                            job.player,
-                            queries,
-                            state=job.state,
-                            source_platform="spotify",
-                        )
-                        await log(
-                            "INFO: Spotify backfill batch processed "
-                            f"(guild={guild_id}, added={batch_stats['added']}, skipped={batch_stats['skipped']})"
-                        )
-
-                    cursor = next_cursor or {}
-
-                if queue:
-                    queue.popleft()
-        except asyncio.CancelledError:
-            return
-        except Exception as exc:
-            await log(f"WARNING: Spotify backfill failed for guild={guild_id}: {exc}")
-        finally:
-            current_task = self.spotify_backfill_tasks.get(guild_id)
-            if current_task is asyncio.current_task():
-                self.spotify_backfill_tasks.pop(guild_id, None)
-
-            queue_ref = self.spotify_backfill_queues.get(guild_id)
-            if queue_ref is not None and not queue_ref:
-                self.spotify_backfill_queues.pop(guild_id, None)
 
     async def _progress_updater(self, guild_id: int, player, state: MediaPlayer):
         track_ref = player.current
@@ -234,24 +151,7 @@ class MediaCommands(commands.Cog):
     def build_collection_added_message(result: dict) -> str:
         title = str(result.get("title") or "").strip() or "Unknown"
         added = int(result.get("added") or 0)
-        spotify_kind = str(result.get("spotify_kind") or "").strip().lower()
-        total_raw = result.get("spotify_total_tracks")
-        total = int(total_raw) if isinstance(total_raw, (int, float)) else None
-        is_partial = bool(result.get("spotify_partial"))
-
-        collection_label = "Альбом" if spotify_kind == "album" else "Плейлист"
-        if is_partial and spotify_kind in {"playlist", "album"}:
-            if isinstance(total, int) and total > 0:
-                return (
-                    f"{collection_label} добавлен: **{title}** "
-                    f"(добавлено {added} из {total}; Spotify API не отдал остальные треки)."
-                )
-            return (
-                f"{collection_label} добавлен: **{title}** "
-                f"(добавлено {added} из неизвестно; Spotify API не отдал остальные треки)."
-            )
-
-        return f"{collection_label} добавлен: **{title}** (треков: {added})."
+        return f"Плейлист добавлен: **{title}** (треков: {added})."
 
     async def ensure_lavalink_ready(self, ctx) -> bool:
         if wavelink is None:
@@ -353,7 +253,6 @@ class MediaCommands(commands.Cog):
         await self.playback_service.handle_view_response(action, player, state)
         if action == "stop":
             self._cancel_progress_task(guild.id)
-            self._cancel_spotify_backfill(guild.id)
 
         if player.connected:
             await self.playback_service.publish_now_playing(
@@ -463,22 +362,6 @@ class MediaCommands(commands.Cog):
                     "Yandex Music недоступен на сервере или по данному URL.",
                 )
             return
-        except (SpotifyConfigError, SpotifyApiError) as exc:
-            cause = getattr(exc, "__cause__", None)
-            cause_text = (
-                f"{type(cause).__name__}: {cause}" if cause is not None else "None"
-            )
-            error_line = (
-                "ERROR: Spotify enqueue failed "
-                f"(type={type(exc).__name__}, message={exc}, cause={cause_text})"
-            )
-            await log(error_line)
-            print(error_line)
-            await self._send_ctx_message(
-                ctx,
-                "Spotify недоступен: проверьте SPOTIFY_CLIENT_ID/SPOTIFY_CLIENT_SECRET или повторите позже.",
-            )
-            return
         except Exception as exc:
             await log(f"ERROR: enqueue_query failed: {exc}")
             await self._send_ctx_message(ctx, "Не удалось загрузить трек по запросу.")
@@ -495,15 +378,6 @@ class MediaCommands(commands.Cog):
             )
         else:
             await self._send_ctx_message(ctx, f"Найден трек: {result['title']}")
-
-        deferred_cursor = result.get("spotify_deferred_cursor")
-        if isinstance(deferred_cursor, dict) and deferred_cursor:
-            self._enqueue_spotify_backfill_job(
-                guild_id,
-                player=player,
-                state=state,
-                cursor=deferred_cursor,
-            )
 
         await self.playback_service.start_if_idle(player, state)
 
@@ -544,7 +418,6 @@ class MediaCommands(commands.Cog):
 
         state = await self.get_player_state(ctx.guild.id)
         self._cancel_progress_task(ctx.guild.id)
-        self._cancel_spotify_backfill(ctx.guild.id)
         await state.reset(queue=player.queue)
         if player.current is not None or player.playing or player.paused:
             await player.skip(force=True)

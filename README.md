@@ -89,9 +89,7 @@ Music:
 Notes:
 
 - `%play` supports direct URLs from YouTube/SoundCloud, Spotify (`track`, `playlist`, `album`, `artist`) and Yandex Music (`track`, `playlist`, `album`).
-- Spotify playback uses Spotify metadata + YouTube Music matching.
-- For Spotify playlists/albums: first 100 tracks are added immediately, remaining tracks are queued in background.
-- If Spotify API returns `403` for playlist items, bot tries Spotify web GraphQL fallback first, then public web playlist data.
+- Spotify playback is resolved by Lavalink + LavaSrc.
 - Yandex Music playback uses Lavalink + LavaSrc and may require proxy in region-restricted environments.
 
 Game:
@@ -117,10 +115,10 @@ Spotify:
 
 - `SPOTIFY_CLIENT_ID`
 - `SPOTIFY_CLIENT_SECRET`
-- `SPOTIFY_PROXY_URL` (optional, HTTP proxy URL for Spotify API requests)
+- `SPOTIFY_PROXY_URL` (optional, HTTP proxy URL for LavaSrc Spotify resolver)
 - `SPOTIFY_PROXY_USERNAME` (optional)
 - `SPOTIFY_PROXY_PASSWORD` (optional)
-- `SPOTIFY_MARKET` (optional, 2-letter market like `US` to improve playlist availability in client-credentials flow)
+- `SPOTIFY_MARKET` (optional, 2-letter market like `US` for LavaSrc Spotify resolver)
 
 Yandex Music:
 

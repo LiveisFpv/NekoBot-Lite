@@ -53,16 +53,29 @@ plugins:
       - WEBEMBEDDED
   lavasrc:
     sources:
+      spotify: true
       yandexmusic: true
+    providers:
+      - "ytsearch:\"%ISRC%\""
+      - "ytmsearch:%QUERY%"
+      - "ytsearch:%QUERY%"
+    spotify:
+      clientId: ${SPOTIFY_CLIENT_ID:}
+      clientSecret: ${SPOTIFY_CLIENT_SECRET:}
+      countryCode: ${SPOTIFY_MARKET:US}
+      playlistLoadLimit: 20
+      albumLoadLimit: 20
+      resolveArtistsInSearch: true
+      localFiles: false
     yandexmusic:
       accessToken: ${YANDEX_TOKEN:}
       playlistLoadLimit: 6
       albumLoadLimit: 6
       artistLoadLimit: 6
-    # proxy:
-    #   url: ${YANDEX_PROXY_URL:}
-    #   username: ${YANDEX_PROXY_USERNAME:}
-    #   password: ${YANDEX_PROXY_PASSWORD:}
+    proxy:
+      url: ${SPOTIFY_PROXY_URL:}
+      username: ${SPOTIFY_PROXY_USERNAME:}
+      password: ${SPOTIFY_PROXY_PASSWORD:}
 
 logging:
   level:
