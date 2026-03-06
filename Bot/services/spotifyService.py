@@ -31,6 +31,18 @@ class SpotifyEntityRef:
 
 class SpotifyService:
     MAX_FALLBACK_LIMIT = 200
+    WEB_HEADERS_CANDIDATES: tuple[dict[str, str], ...] = (
+        {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+        {
+            "User-Agent": "curl/8.5.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
 
     _OG_TITLE_RE = re.compile(
         r'<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']+)["\']',
@@ -320,71 +332,75 @@ class SpotifyService:
         limit: int,
     ) -> tuple[str, list[str]]:
         page_url = f"https://open.spotify.com/{kind}/{entity_id}"
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        try:
-            page_html = await self.http_service.get_text(page_url, headers=headers)
-        except Exception as exc:
+        capped_limit = max(1, min(int(limit), self.MAX_FALLBACK_LIMIT))
+        last_error: Exception | None = None
+        best_title = entity_id
+
+        for headers in self.WEB_HEADERS_CANDIDATES:
+            try:
+                page_html = await self.http_service.get_text(page_url, headers=headers)
+            except Exception as exc:
+                last_error = exc
+                continue
+
+            current_title = self._extract_title_from_html(page_html, entity_id)
+            if current_title:
+                best_title = current_title
+
+            queries: list[str] = []
+            seen: set[str] = set()
+
+            for match in self._SCRIPT_TAG_RE.finditer(page_html or ""):
+                payload = self._decode_script_payload(str(match.group("content") or ""))
+                if payload is None:
+                    continue
+                for query in self._extract_queries_from_json(payload, limit=capped_limit):
+                    if query in seen:
+                        continue
+                    seen.add(query)
+                    queries.append(query)
+                    if len(queries) >= capped_limit:
+                        return best_title, queries[:capped_limit]
+
+            for match in self._JSON_LD_RE.finditer(page_html or ""):
+                payload = self._decode_script_payload(str(match.group("content") or ""))
+                if payload is None:
+                    continue
+                for query in self._extract_queries_from_json(payload, limit=capped_limit):
+                    if query in seen:
+                        continue
+                    seen.add(query)
+                    queries.append(query)
+                    if len(queries) >= capped_limit:
+                        return best_title, queries[:capped_limit]
+
+            if len(queries) < capped_limit:
+                track_urls = self._extract_track_urls_from_html(
+                    page_html,
+                    limit=capped_limit - len(queries),
+                )
+                for track_url in track_urls:
+                    try:
+                        query = await self._query_from_track_oembed(track_url)
+                    except Exception:
+                        continue
+                    if not query or query in seen:
+                        continue
+                    seen.add(query)
+                    queries.append(query)
+                    if len(queries) >= capped_limit:
+                        break
+
+            if queries:
+                return best_title, queries[:capped_limit]
+
+        if last_error is not None:
             raise SpotifyApiError(
                 "Spotify web fallback request failed: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
+                f"{type(last_error).__name__}: {last_error}"
+            ) from last_error
 
-        display_title = self._extract_title_from_html(page_html, entity_id)
-        capped_limit = max(1, min(int(limit), self.MAX_FALLBACK_LIMIT))
-        queries: list[str] = []
-        seen: set[str] = set()
-
-        for match in self._SCRIPT_TAG_RE.finditer(page_html or ""):
-            payload = self._decode_script_payload(str(match.group("content") or ""))
-            if payload is None:
-                continue
-            for query in self._extract_queries_from_json(payload, limit=capped_limit):
-                if query in seen:
-                    continue
-                seen.add(query)
-                queries.append(query)
-                if len(queries) >= capped_limit:
-                    return display_title, queries
-
-        for match in self._JSON_LD_RE.finditer(page_html or ""):
-            payload = self._decode_script_payload(str(match.group("content") or ""))
-            if payload is None:
-                continue
-            for query in self._extract_queries_from_json(payload, limit=capped_limit):
-                if query in seen:
-                    continue
-                seen.add(query)
-                queries.append(query)
-                if len(queries) >= capped_limit:
-                    return display_title, queries
-
-        if len(queries) >= capped_limit:
-            return display_title, queries[:capped_limit]
-
-        track_urls = self._extract_track_urls_from_html(
-            page_html,
-            limit=capped_limit - len(queries),
-        )
-        for track_url in track_urls:
-            try:
-                query = await self._query_from_track_oembed(track_url)
-            except Exception:
-                continue
-            if not query or query in seen:
-                continue
-            seen.add(query)
-            queries.append(query)
-            if len(queries) >= capped_limit:
-                break
-
-        return display_title, queries[:capped_limit]
+        return best_title, []
 
     async def resolve_for_enqueue(self, query: str, *, initial_limit: int = 100) -> dict:
         reference = self.parse_spotify_url(query)
