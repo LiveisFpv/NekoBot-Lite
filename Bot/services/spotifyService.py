@@ -518,10 +518,27 @@ class SpotifyService:
                 ) from exc
             return {
                 "kind": "playlist",
-                "display_title": web_title or display_title,
+                "display_title": display_title or web_title,
                 "initial_queries": merged,
                 "deferred_cursor": None,
             }
+
+        if reference.kind == "playlist" and not initial_queries:
+            try:
+                web_title, web_queries = await self._resolve_public_playlist_via_web(
+                    reference.entity_id,
+                    limit=limit,
+                )
+            except SpotifyApiError:
+                web_title, web_queries = "", []
+
+            if web_queries:
+                return {
+                    "kind": "playlist",
+                    "display_title": display_title or web_title,
+                    "initial_queries": web_queries[:limit],
+                    "deferred_cursor": None,
+                }
 
         return {
             "kind": reference.kind,

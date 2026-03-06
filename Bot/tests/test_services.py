@@ -476,7 +476,8 @@ async def test_spotify_service_resolve_playlist_returns_initial_and_deferred():
 
 
 @pytest.mark.asyncio
-async def test_spotify_service_resolve_artist_returns_top_tracks():
+async def test_spotify_service_resolve_artist_returns_top_tracks(monkeypatch):
+    monkeypatch.setenv("SPOTIFY_MARKET", "US")
     artist_id = "ART123"
     http_service = DummyHttpService(
         post_json_payload={"access_token": "token", "expires_in": 3600},
@@ -511,7 +512,8 @@ async def test_spotify_service_resolve_artist_returns_top_tracks():
 
 
 @pytest.mark.asyncio
-async def test_spotify_service_resolve_playlist_uses_web_fallback_on_forbidden():
+async def test_spotify_service_resolve_playlist_uses_web_fallback_on_forbidden(monkeypatch):
+    monkeypatch.setenv("SPOTIFY_MARKET", "US")
     playlist_id = "PL403"
     playlist_api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}?market=US"
     initial_state_payload = {
@@ -586,7 +588,8 @@ async def test_spotify_service_resolve_playlist_uses_web_fallback_on_forbidden()
 
 
 @pytest.mark.asyncio
-async def test_spotify_service_resolve_playlist_tracks_forbidden_uses_web_fallback():
+async def test_spotify_service_resolve_playlist_tracks_forbidden_uses_web_fallback(monkeypatch):
+    monkeypatch.setenv("SPOTIFY_MARKET", "US")
     playlist_id = "PL403B"
     playlist_info_url = f"https://api.spotify.com/v1/playlists/{playlist_id}?market=US"
     playlist_tracks_url = (
@@ -649,7 +652,7 @@ async def test_spotify_service_resolve_playlist_tracks_forbidden_uses_web_fallba
     )
 
     assert payload["kind"] == "playlist"
-    assert payload["display_title"] == "Fallback Playlist 2"
+    assert payload["display_title"] == "API Playlist Name"
     assert payload["deferred_cursor"] is None
     assert payload["initial_queries"] == ["Artist X - Song X"]
 
