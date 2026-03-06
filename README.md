@@ -90,6 +90,7 @@ Notes:
 
 - `%play` supports direct URLs from YouTube/SoundCloud, Spotify (`track`, `playlist`, `album`, `artist`) and Yandex Music (`track`, `playlist`, `album`).
 - Spotify playback is resolved by Lavalink + LavaSrc.
+- For Spotify anonymous token support, `spotify-tokener` is started in docker compose and used by LavaSrc.
 - Yandex Music playback uses Lavalink + LavaSrc and may require proxy in region-restricted environments.
 
 Game:
@@ -115,6 +116,7 @@ Spotify:
 
 - `SPOTIFY_CLIENT_ID`
 - `SPOTIFY_CLIENT_SECRET`
+- `SPOTIFY_TOKEN_ENDPOINT` (optional, LavaSrc anonymous token endpoint, default: `http://spotify-tokener:8080/api/token`)
 - `SPOTIFY_PROXY_URL` (optional, HTTP proxy URL for LavaSrc Spotify resolver)
 - `SPOTIFY_PROXY_USERNAME` (optional)
 - `SPOTIFY_PROXY_PASSWORD` (optional)

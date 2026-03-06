@@ -29,15 +29,16 @@ services:
     image: ghcr.io/lavalink-devs/lavalink:4.2.1
     container_name: nekobot-lavalink
     restart: unless-stopped
+    depends_on:
+      spotify-tokener:
+        condition: service_started
     environment:
       - _JAVA_OPTIONS=-Xmx512M
       - SERVER_PORT=2333
       - LAVALINK_SERVER_PASSWORD=${LAVALINK_PASSWORD:-youshallnotpass}
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
       - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
-      - SPOTIFY_PROXY_URL=${SPOTIFY_PROXY_URL:-}
-      - SPOTIFY_PROXY_USERNAME=${SPOTIFY_PROXY_USERNAME:-}
-      - SPOTIFY_PROXY_PASSWORD=${SPOTIFY_PROXY_PASSWORD:-}
+      - SPOTIFY_TOKEN_ENDPOINT=${SPOTIFY_TOKEN_ENDPOINT:-http://spotify-tokener:8080/api/token}
       - SPOTIFY_MARKET=${SPOTIFY_MARKET:-US}
       - YANDEX_TOKEN=${YANDEX_TOKEN}
       - YANDEX_PROXY_URL=${YANDEX_PROXY_URL:-}
@@ -60,6 +61,16 @@ services:
     networks:
       intenal:
         ipv4_address: 172.31.0.10
+
+  spotify-tokener:
+    image: ghcr.io/topi314/spotify-tokener:master
+    container_name: nekobot-spotify-tokener
+    restart: unless-stopped
+    expose:
+      - "8080"
+    networks:
+      intenal:
+        ipv4_address: 172.31.0.12
 networks:
   intenal:
     driver: bridge

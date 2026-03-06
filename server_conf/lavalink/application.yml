@@ -63,6 +63,8 @@ plugins:
       clientId: ${SPOTIFY_CLIENT_ID:}
       clientSecret: ${SPOTIFY_CLIENT_SECRET:}
       countryCode: ${SPOTIFY_MARKET:US}
+      preferAnonymousToken: true
+      customTokenEndpoint: ${SPOTIFY_TOKEN_ENDPOINT:http://spotify-tokener:8080/api/token}
       playlistLoadLimit: 20
       albumLoadLimit: 20
       resolveArtistsInSearch: true
@@ -72,10 +74,6 @@ plugins:
       playlistLoadLimit: 6
       albumLoadLimit: 6
       artistLoadLimit: 6
-    # proxy:
-    #   # url: ${SPOTIFY_PROXY_URL:}
-    #   # username: ${SPOTIFY_PROXY_USERNAME:}
-    #   # password: ${SPOTIFY_PROXY_PASSWORD:}
 
 logging:
   level:
