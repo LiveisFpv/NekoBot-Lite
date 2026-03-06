@@ -49,7 +49,9 @@ plugins:
     allowDirectPlaylistIds: true
     clients:
       - MUSIC
-      - TVHTML5_SIMPLY
+      - ANDROID_VR
+      - WEB
+      - WEBEMBEDDED
   lavasrc:
     sources:
       spotify: true
