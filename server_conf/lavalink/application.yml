@@ -72,10 +72,10 @@ plugins:
       playlistLoadLimit: 6
       albumLoadLimit: 6
       artistLoadLimit: 6
-    proxy:
-      url: ${SPOTIFY_PROXY_URL:}
-      username: ${SPOTIFY_PROXY_USERNAME:}
-      password: ${SPOTIFY_PROXY_PASSWORD:}
+    # proxy:
+    #   # url: ${SPOTIFY_PROXY_URL:}
+    #   # username: ${SPOTIFY_PROXY_USERNAME:}
+    #   # password: ${SPOTIFY_PROXY_PASSWORD:}
 
 logging:
   level:
