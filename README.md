@@ -116,10 +116,8 @@ Spotify:
 
 - `SPOTIFY_CLIENT_ID`
 - `SPOTIFY_CLIENT_SECRET`
+- `SPOTIFY_PREFER_ANONYMOUS_TOKEN` (optional, default: `false`; set `true` only if needed for generated playlists)
 - `SPOTIFY_TOKEN_ENDPOINT` (optional, LavaSrc anonymous token endpoint, default: `http://spotify-tokener:8080/api/token`)
-- `SPOTIFY_PROXY_URL` (optional, HTTP proxy URL for LavaSrc Spotify resolver)
-- `SPOTIFY_PROXY_USERNAME` (optional)
-- `SPOTIFY_PROXY_PASSWORD` (optional)
 - `SPOTIFY_MARKET` (optional, 2-letter market like `US` for LavaSrc Spotify resolver)
 
 Yandex Music:

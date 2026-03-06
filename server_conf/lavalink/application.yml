@@ -63,7 +63,7 @@ plugins:
       clientId: ${SPOTIFY_CLIENT_ID:}
       clientSecret: ${SPOTIFY_CLIENT_SECRET:}
       countryCode: ${SPOTIFY_MARKET:US}
-      preferAnonymousToken: true
+      preferAnonymousToken: ${SPOTIFY_PREFER_ANONYMOUS_TOKEN:false}
       customTokenEndpoint: ${SPOTIFY_TOKEN_ENDPOINT:http://spotify-tokener:8080/api/token}
       playlistLoadLimit: 20
       albumLoadLimit: 20
