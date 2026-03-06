@@ -230,6 +230,29 @@ class MediaCommands(commands.Cog):
         except Exception:
             await ctx.send(content)
 
+    @staticmethod
+    def build_collection_added_message(result: dict) -> str:
+        title = str(result.get("title") or "").strip() or "Unknown"
+        added = int(result.get("added") or 0)
+        spotify_kind = str(result.get("spotify_kind") or "").strip().lower()
+        total_raw = result.get("spotify_total_tracks")
+        total = int(total_raw) if isinstance(total_raw, (int, float)) else None
+        is_partial = bool(result.get("spotify_partial"))
+
+        collection_label = "Альбом" if spotify_kind == "album" else "Плейлист"
+        if is_partial and spotify_kind in {"playlist", "album"}:
+            if isinstance(total, int) and total > 0:
+                return (
+                    f"{collection_label} добавлен: **{title}** "
+                    f"(добавлено {added} из {total}; Spotify API не отдал остальные треки)."
+                )
+            return (
+                f"{collection_label} добавлен: **{title}** "
+                f"(добавлено {added} из неизвестно; Spotify API не отдал остальные треки)."
+            )
+
+        return f"{collection_label} добавлен: **{title}** (треков: {added})."
+
     async def ensure_lavalink_ready(self, ctx) -> bool:
         if wavelink is None:
             await self._send_ctx_message(ctx, "Wavelink не установлен. Воспроизведение недоступно.")
@@ -468,7 +491,7 @@ class MediaCommands(commands.Cog):
         if result["is_playlist"]:
             await self._send_ctx_message(
                 ctx,
-                f"Плейлист добавлен: **{result['title']}** (треков: {result['added']}).",
+                self.build_collection_added_message(result),
             )
         else:
             await self._send_ctx_message(ctx, f"Найден трек: {result['title']}")

@@ -591,13 +591,21 @@ class MediaPlaybackService:
             skipped = int(enqueue_stats["skipped"] or 0)
             kind = str(payload.get("kind") or "track")
             title = str(payload.get("display_title") or enqueue_stats.get("first_title") or "")
-            fallback_mode = str(payload.get("fallback_mode") or "").strip()
+            total_tracks_raw = payload.get("total_tracks")
+            total_tracks = (
+                int(total_tracks_raw)
+                if isinstance(total_tracks_raw, (int, float))
+                else None
+            )
+            partial = bool(payload.get("partial"))
+            partial_reason = str(payload.get("partial_reason") or "").strip() or None
 
             await log(
                 "INFO: Spotify import processed "
                 f"(kind={kind}, added={added}, skipped={skipped}, deferred="
                 f"{'yes' if payload.get('deferred_cursor') else 'no'}, "
-                f"fallback={fallback_mode or 'none'})"
+                f"total={total_tracks if total_tracks is not None else 'unknown'}, "
+                f"partial={'yes' if partial else 'no'})"
             )
             return {
                 "added": added,
@@ -606,6 +614,9 @@ class MediaPlaybackService:
                 "spotify_deferred_cursor": payload.get("deferred_cursor"),
                 "spotify_kind": kind,
                 "skipped": skipped,
+                "spotify_total_tracks": total_tracks,
+                "spotify_partial": partial,
+                "spotify_partial_reason": partial_reason,
             }
 
         result = await self.resolve_tracks(query)
