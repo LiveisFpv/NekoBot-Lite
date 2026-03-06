@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -21,6 +22,7 @@ from services.mediaPlaybackService import (
 from services.mediaService import MediaPlayer
 from services.memeService import MemeService
 from services.spotifyService import SpotifyConfigError, SpotifyService
+from services.httpService import HttpRequestError
 from Commands.media import MediaCommands, SpotifyBackfillJob
 
 
@@ -30,11 +32,13 @@ class DummyHttpService:
         json_payload=None,
         text_payload=None,
         json_by_url: dict | None = None,
+        text_by_url: dict | None = None,
         post_json_payload=None,
     ):
         self.json_payload = json_payload
         self.text_payload = text_payload
         self.json_by_url = dict(json_by_url or {})
+        self.text_by_url = dict(text_by_url or {})
         self.post_json_payload = post_json_payload or {}
         self.last_get_json_url = None
         self.last_post_form_url = None
@@ -43,12 +47,19 @@ class DummyHttpService:
         self.last_get_json_url = url
         if url in self.json_by_url:
             payload = self.json_by_url[url]
+            if isinstance(payload, Exception):
+                raise payload
             if isinstance(payload, list):
                 return payload.pop(0) if payload else {}
             return payload
         return self.json_payload
 
     async def get_text(self, url: str, headers=None) -> str:
+        if url in self.text_by_url:
+            payload = self.text_by_url[url]
+            if isinstance(payload, Exception):
+                raise payload
+            return str(payload)
         return self.text_payload or ""
 
     async def post_form_json(self, url: str, data=None, headers=None):
@@ -326,10 +337,11 @@ async def test_media_player_track_platform_meta_roundtrip():
     assert await state.get_track_platforms(track) == ("unknown", "unknown")
 
 
-def test_spotify_service_parse_spotify_url_track_playlist_album():
+def test_spotify_service_parse_spotify_url_track_playlist_album_artist():
     ref_track = SpotifyService.parse_spotify_url("https://open.spotify.com/track/abc123?si=zzz")
     ref_playlist = SpotifyService.parse_spotify_url("https://open.spotify.com/playlist/pl123")
     ref_album = SpotifyService.parse_spotify_url("https://open.spotify.com/album/alb123")
+    ref_artist = SpotifyService.parse_spotify_url("https://open.spotify.com/artist/art123")
 
     assert ref_track.kind == "track"
     assert ref_track.entity_id == "abc123"
@@ -337,6 +349,8 @@ def test_spotify_service_parse_spotify_url_track_playlist_album():
     assert ref_playlist.entity_id == "pl123"
     assert ref_album.kind == "album"
     assert ref_album.entity_id == "alb123"
+    assert ref_artist.kind == "artist"
+    assert ref_artist.entity_id == "art123"
 
 
 def test_spotify_service_reads_proxy_env(monkeypatch):
@@ -459,6 +473,185 @@ async def test_spotify_service_resolve_playlist_returns_initial_and_deferred():
     assert len(payload["initial_queries"]) == 100
     assert payload["initial_queries"][0] == "Artist 0 - Song 0"
     assert payload["deferred_cursor"]["offset"] == 100
+
+
+@pytest.mark.asyncio
+async def test_spotify_service_resolve_artist_returns_top_tracks():
+    artist_id = "ART123"
+    http_service = DummyHttpService(
+        post_json_payload={"access_token": "token", "expires_in": 3600},
+        json_by_url={
+            f"https://api.spotify.com/v1/artists/{artist_id}?market=US": {"name": "Artist Name"},
+            f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks?market=US": {
+                "tracks": [
+                    {"name": "Song 1", "artists": [{"name": "Artist Name"}]},
+                    {"name": "Song 2", "artists": [{"name": "Artist Name"}]},
+                ]
+            },
+        },
+    )
+    service = SpotifyService(
+        http_service=http_service,
+        client_id="client",
+        client_secret="secret",
+    )
+
+    payload = await service.resolve_for_enqueue(
+        f"https://open.spotify.com/artist/{artist_id}",
+        initial_limit=5,
+    )
+
+    assert payload["kind"] == "artist"
+    assert payload["display_title"] == "Artist Name"
+    assert payload["deferred_cursor"] is None
+    assert payload["initial_queries"] == [
+        "Artist Name - Song 1",
+        "Artist Name - Song 2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_spotify_service_resolve_playlist_uses_web_fallback_on_forbidden():
+    playlist_id = "PL403"
+    playlist_api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}?market=US"
+    initial_state_payload = {
+        "entities": {
+            "items": {
+                f"spotify:playlist:{playlist_id}": {
+                    "name": "Fallback Playlist",
+                    "content": {
+                        "items": [
+                            {
+                                "itemV2": {
+                                    "data": {
+                                        "name": "Song A",
+                                        "artists": {"items": [{"profile": {"name": "Artist A"}}]},
+                                    }
+                                }
+                            },
+                            {
+                                "itemV2": {
+                                    "data": {
+                                        "name": "Song B",
+                                        "artists": {"items": [{"profile": {"name": "Artist B"}}]},
+                                    }
+                                }
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+    }
+    initial_state_b64 = base64.b64encode(
+        json.dumps(initial_state_payload).encode("utf-8")
+    ).decode("ascii")
+    fallback_html = (
+        "<html><head>"
+        "<meta property=\"og:title\" content=\"Fallback Playlist\"/>"
+        f"<script id=\"initialState\" type=\"text/plain\">{initial_state_b64}</script>"
+        "</head><body></body></html>"
+    )
+    http_service = DummyHttpService(
+        post_json_payload={"access_token": "token", "expires_in": 3600},
+        json_by_url={
+            playlist_api_url: HttpRequestError(
+                status=403,
+                url=playlist_api_url,
+                body='{"error":{"status":403,"message":"Forbidden"}}',
+            ),
+        },
+        text_by_url={
+            f"https://open.spotify.com/playlist/{playlist_id}": fallback_html,
+        },
+    )
+    service = SpotifyService(
+        http_service=http_service,
+        client_id="client",
+        client_secret="secret",
+    )
+
+    payload = await service.resolve_for_enqueue(
+        f"https://open.spotify.com/playlist/{playlist_id}",
+        initial_limit=10,
+    )
+
+    assert payload["kind"] == "playlist"
+    assert payload["display_title"] == "Fallback Playlist"
+    assert payload["deferred_cursor"] is None
+    assert payload["initial_queries"] == [
+        "Artist A - Song A",
+        "Artist B - Song B",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_spotify_service_resolve_playlist_tracks_forbidden_uses_web_fallback():
+    playlist_id = "PL403B"
+    playlist_info_url = f"https://api.spotify.com/v1/playlists/{playlist_id}?market=US"
+    playlist_tracks_url = (
+        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+        "?offset=0&limit=50&additional_types=track&market=US"
+    )
+    initial_state_payload = {
+        "entities": {
+            "items": {
+                f"spotify:playlist:{playlist_id}": {
+                    "name": "Fallback Playlist 2",
+                    "content": {
+                        "items": [
+                            {
+                                "itemV2": {
+                                    "data": {
+                                        "name": "Song X",
+                                        "artists": {"items": [{"profile": {"name": "Artist X"}}]},
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                }
+            }
+        }
+    }
+    initial_state_b64 = base64.b64encode(
+        json.dumps(initial_state_payload).encode("utf-8")
+    ).decode("ascii")
+    fallback_html = (
+        "<html><head>"
+        "<meta property=\"og:title\" content=\"Fallback Playlist 2\"/>"
+        f"<script id=\"initialState\" type=\"text/plain\">{initial_state_b64}</script>"
+        "</head><body></body></html>"
+    )
+    http_service = DummyHttpService(
+        post_json_payload={"access_token": "token", "expires_in": 3600},
+        json_by_url={
+            playlist_info_url: {"name": "API Playlist Name"},
+            playlist_tracks_url: HttpRequestError(
+                status=403,
+                url=playlist_tracks_url,
+                body='{"error":{"status":403,"message":"Forbidden"}}',
+            ),
+        },
+        text_by_url={
+            f"https://open.spotify.com/playlist/{playlist_id}": fallback_html,
+        },
+    )
+    service = SpotifyService(
+        http_service=http_service,
+        client_id="client",
+        client_secret="secret",
+    )
+
+    payload = await service.resolve_for_enqueue(
+        f"https://open.spotify.com/playlist/{playlist_id}",
+        initial_limit=10,
+    )
+
+    assert payload["kind"] == "playlist"
+    assert payload["display_title"] == "Fallback Playlist 2"
+    assert payload["deferred_cursor"] is None
+    assert payload["initial_queries"] == ["Artist X - Song X"]
 
 
 @pytest.mark.asyncio

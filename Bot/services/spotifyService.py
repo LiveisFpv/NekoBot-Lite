@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
@@ -31,6 +33,18 @@ class SpotifyService:
     TOKEN_URL = "https://accounts.spotify.com/api/token"
     API_BASE = "https://api.spotify.com/v1"
     MAX_PAGE_LIMIT = 50
+    _INITIAL_STATE_RE = re.compile(
+        r'<script id="initialState"[^>]*>(.*?)</script>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    _OG_TITLE_RE = re.compile(
+        r'<meta property="og:title" content="([^"]+)"',
+        re.IGNORECASE,
+    )
+    _MUSIC_SONG_RE = re.compile(
+        r'<meta name="music:song" content="([^"]+)"',
+        re.IGNORECASE,
+    )
 
     def __init__(
         self,
@@ -75,7 +89,7 @@ class SpotifyService:
             raise SpotifyApiError("Unsupported Spotify host.")
 
         segments = [segment for segment in parsed.path.split("/") if segment]
-        valid_kinds = {"track", "playlist", "album"}
+        valid_kinds = {"track", "playlist", "album", "artist"}
 
         for idx, segment in enumerate(segments):
             segment_l = segment.strip().lower()
@@ -178,6 +192,11 @@ class SpotifyService:
         return payload if isinstance(payload, dict) else {}
 
     @staticmethod
+    def _is_forbidden_error(exc: Exception) -> bool:
+        cause = getattr(exc, "__cause__", None)
+        return isinstance(cause, HttpRequestError) and int(cause.status) == 403
+
+    @staticmethod
     def _track_to_query(track_payload: dict | None) -> str:
         if not isinstance(track_payload, dict):
             return ""
@@ -199,6 +218,140 @@ class SpotifyService:
     async def _get_album_name(self, album_id: str) -> str:
         payload = await self._get_json(f"{self.API_BASE}/albums/{album_id}")
         return str(payload.get("name") or "").strip() or album_id
+
+    async def _get_artist_name(self, artist_id: str) -> str:
+        payload = await self._get_json(f"{self.API_BASE}/artists/{artist_id}")
+        return str(payload.get("name") or "").strip() or artist_id
+
+    async def _get_artist_top_track_queries(self, artist_id: str, *, limit: int) -> list[str]:
+        market = self.market or "US"
+        payload = await self._get_json(
+            f"{self.API_BASE}/artists/{artist_id}/top-tracks?market={market}"
+        )
+        tracks = payload.get("tracks") or []
+        queries: list[str] = []
+        for item in tracks if isinstance(tracks, list) else []:
+            query = self._track_to_query(item if isinstance(item, dict) else None)
+            if query:
+                queries.append(query)
+            if len(queries) >= limit:
+                break
+        return queries
+
+    @staticmethod
+    def _extract_playlist_queries_from_initial_state(
+        raw_initial_state: str,
+        playlist_id: str,
+        *,
+        limit: int,
+    ) -> tuple[str, list[str]]:
+        if not raw_initial_state:
+            return playlist_id, []
+
+        try:
+            decoded = base64.b64decode(raw_initial_state + "===")
+            state = json.loads(decoded.decode("utf-8", errors="ignore"))
+        except Exception:
+            return playlist_id, []
+
+        playlist_uri = f"spotify:playlist:{playlist_id}"
+        entities = state.get("entities") or {}
+        items = entities.get("items") if isinstance(entities, dict) else {}
+        playlist_payload = items.get(playlist_uri) if isinstance(items, dict) else {}
+        if not isinstance(playlist_payload, dict):
+            return playlist_id, []
+
+        display_title = str(playlist_payload.get("name") or "").strip() or playlist_id
+        content = playlist_payload.get("content") or {}
+        content_items = content.get("items") if isinstance(content, dict) else []
+        if not isinstance(content_items, list):
+            return display_title, []
+
+        queries: list[str] = []
+        for entry in content_items:
+            item_v2 = entry.get("itemV2") if isinstance(entry, dict) else None
+            track_data = item_v2.get("data") if isinstance(item_v2, dict) else None
+            if not isinstance(track_data, dict):
+                continue
+
+            name = str(track_data.get("name") or "").strip()
+            artists: list[str] = []
+            artists_payload = track_data.get("artists")
+            artists_items = artists_payload.get("items") if isinstance(artists_payload, dict) else []
+            if isinstance(artists_items, list):
+                for artist_entry in artists_items:
+                    if not isinstance(artist_entry, dict):
+                        continue
+                    profile = artist_entry.get("profile")
+                    artist_name = (
+                        str(profile.get("name") or "").strip()
+                        if isinstance(profile, dict)
+                        else ""
+                    )
+                    if not artist_name:
+                        artist_name = str(artist_entry.get("name") or "").strip()
+                    if artist_name:
+                        artists.append(artist_name)
+
+            query = SpotifyService.build_search_query(name, artists)
+            if query:
+                queries.append(query)
+            if len(queries) >= limit:
+                break
+
+        return display_title, queries
+
+    @classmethod
+    def _extract_playlist_title_from_html(cls, html: str, fallback: str) -> str:
+        match = cls._OG_TITLE_RE.search(html or "")
+        if not match:
+            return fallback
+        title = str(match.group(1) or "").strip()
+        return title or fallback
+
+    async def _resolve_public_playlist_via_web(
+        self,
+        playlist_id: str,
+        *,
+        limit: int,
+    ) -> tuple[str, list[str]]:
+        page_url = f"https://open.spotify.com/playlist/{playlist_id}"
+        try:
+            page_html = await self.http_service.get_text(page_url)
+        except Exception as exc:
+            raise SpotifyApiError(
+                "Spotify web fallback request failed: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        display_title = self._extract_playlist_title_from_html(page_html, playlist_id)
+
+        initial_state_match = self._INITIAL_STATE_RE.search(page_html or "")
+        if initial_state_match:
+            display_title, queries = self._extract_playlist_queries_from_initial_state(
+                str(initial_state_match.group(1) or "").strip(),
+                playlist_id,
+                limit=limit,
+            )
+            if queries:
+                return display_title, queries
+
+        track_urls = self._MUSIC_SONG_RE.findall(page_html or "")
+        queries: list[str] = []
+        for track_url in track_urls[:limit]:
+            try:
+                track_ref = self.parse_spotify_url(track_url)
+                if track_ref.kind != "track":
+                    continue
+                payload = await self._get_json(f"{self.API_BASE}/tracks/{track_ref.entity_id}")
+            except Exception:
+                continue
+            query = self._track_to_query(payload)
+            if query:
+                queries.append(query)
+            if len(queries) >= limit:
+                break
+
+        return display_title, queries
 
     @staticmethod
     def _parse_next_offset(next_url: str | None) -> int | None:
@@ -281,8 +434,42 @@ class SpotifyService:
                 "deferred_cursor": None,
             }
 
+        if reference.kind == "artist":
+            limit = max(1, int(initial_limit))
+            display_title = await self._get_artist_name(reference.entity_id)
+            initial_queries = await self._get_artist_top_track_queries(
+                reference.entity_id,
+                limit=limit,
+            )
+            return {
+                "kind": "artist",
+                "display_title": display_title,
+                "initial_queries": initial_queries[:limit],
+                "deferred_cursor": None,
+            }
+
         if reference.kind == "playlist":
-            display_title = await self._get_playlist_name(reference.entity_id)
+            limit = max(1, int(initial_limit))
+            try:
+                display_title = await self._get_playlist_name(reference.entity_id)
+            except SpotifyApiError as exc:
+                if not self._is_forbidden_error(exc):
+                    raise
+                display_title, web_queries = await self._resolve_public_playlist_via_web(
+                    reference.entity_id,
+                    limit=limit,
+                )
+                if not web_queries:
+                    raise SpotifyApiError(
+                        "Spotify playlist is inaccessible via API (403) "
+                        "and web fallback returned no tracks."
+                    ) from exc
+                return {
+                    "kind": "playlist",
+                    "display_title": display_title,
+                    "initial_queries": web_queries[:limit],
+                    "deferred_cursor": None,
+                }
         else:
             display_title = await self._get_album_name(reference.entity_id)
 
@@ -295,16 +482,46 @@ class SpotifyService:
         }
         initial_queries: list[str] = []
 
-        while cursor is not None and len(initial_queries) < limit:
-            remaining = limit - len(initial_queries)
-            batch_queries, cursor = await self.fetch_deferred_queries(
-                cursor,
-                batch_size=min(self.MAX_PAGE_LIMIT, remaining),
+        try:
+            while cursor is not None and len(initial_queries) < limit:
+                remaining = limit - len(initial_queries)
+                batch_queries, cursor = await self.fetch_deferred_queries(
+                    cursor,
+                    batch_size=min(self.MAX_PAGE_LIMIT, remaining),
+                )
+                if batch_queries:
+                    initial_queries.extend(batch_queries)
+                elif cursor is None:
+                    break
+        except SpotifyApiError as exc:
+            if reference.kind != "playlist" or not self._is_forbidden_error(exc):
+                raise
+
+            web_title, web_queries = await self._resolve_public_playlist_via_web(
+                reference.entity_id,
+                limit=limit,
             )
-            if batch_queries:
-                initial_queries.extend(batch_queries)
-            elif cursor is None:
-                break
+            merged: list[str] = []
+            seen: set[str] = set()
+            for item in initial_queries + web_queries:
+                item_text = str(item or "").strip()
+                if not item_text or item_text in seen:
+                    continue
+                seen.add(item_text)
+                merged.append(item_text)
+                if len(merged) >= limit:
+                    break
+            if not merged:
+                raise SpotifyApiError(
+                    "Spotify playlist is inaccessible via API (403) "
+                    "and web fallback returned no tracks."
+                ) from exc
+            return {
+                "kind": "playlist",
+                "display_title": web_title or display_title,
+                "initial_queries": merged,
+                "deferred_cursor": None,
+            }
 
         return {
             "kind": reference.kind,

@@ -600,7 +600,7 @@ class MediaPlaybackService:
             return {
                 "added": added,
                 "title": title or None,
-                "is_playlist": kind in {"playlist", "album"},
+                "is_playlist": kind in {"playlist", "album", "artist"},
                 "spotify_deferred_cursor": payload.get("deferred_cursor"),
                 "spotify_kind": kind,
                 "skipped": skipped,
