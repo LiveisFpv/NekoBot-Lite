@@ -91,7 +91,7 @@ Notes:
 - `%play` supports direct URLs from YouTube/SoundCloud, Spotify (`track`, `playlist`, `album`, `artist`) and Yandex Music (`track`, `playlist`, `album`).
 - Spotify playback uses Spotify metadata + YouTube Music matching.
 - For Spotify playlists/albums: first 100 tracks are added immediately, remaining tracks are queued in background.
-- If Spotify API returns `403` for playlist items, bot falls back to public web playlist data (visible tracks only).
+- If Spotify API returns `403` for playlist items, bot tries Spotify web GraphQL fallback first, then public web playlist data.
 - Yandex Music playback uses Lavalink + LavaSrc and may require proxy in region-restricted environments.
 
 Game:

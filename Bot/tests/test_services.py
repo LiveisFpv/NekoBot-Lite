@@ -33,15 +33,18 @@ class DummyHttpService:
         text_payload=None,
         json_by_url: dict | None = None,
         text_by_url: dict | None = None,
+        post_json_by_url: dict | None = None,
         post_json_payload=None,
     ):
         self.json_payload = json_payload
         self.text_payload = text_payload
         self.json_by_url = dict(json_by_url or {})
         self.text_by_url = dict(text_by_url or {})
+        self.post_json_by_url = dict(post_json_by_url or {})
         self.post_json_payload = post_json_payload or {}
         self.last_get_json_url = None
         self.last_post_form_url = None
+        self.last_post_json_url = None
 
     async def get_json(self, url: str, headers=None):
         self.last_get_json_url = url
@@ -64,6 +67,17 @@ class DummyHttpService:
 
     async def post_form_json(self, url: str, data=None, headers=None):
         self.last_post_form_url = url
+        return self.post_json_payload
+
+    async def post_json(self, url: str, data=None, headers=None):
+        self.last_post_json_url = url
+        if url in self.post_json_by_url:
+            payload = self.post_json_by_url[url]
+            if isinstance(payload, Exception):
+                raise payload
+            if isinstance(payload, list):
+                return payload.pop(0) if payload else {}
+            return payload
         return self.post_json_payload
 
 
@@ -655,6 +669,102 @@ async def test_spotify_service_resolve_playlist_tracks_forbidden_uses_web_fallba
     assert payload["display_title"] == "API Playlist Name"
     assert payload["deferred_cursor"] is None
     assert payload["initial_queries"] == ["Artist X - Song X"]
+
+
+@pytest.mark.asyncio
+async def test_spotify_service_resolve_playlist_tracks_forbidden_uses_pathfinder_with_deferred(monkeypatch):
+    monkeypatch.setenv("SPOTIFY_MARKET", "US")
+    playlist_id = "PLPF1"
+    playlist_info_url = f"https://api.spotify.com/v1/playlists/{playlist_id}?market=US"
+    playlist_tracks_url = (
+        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+        "?offset=0&limit=50&additional_types=track&market=US"
+    )
+    pathfinder_page_0 = {
+        "data": {
+            "playlistV2": {
+                "name": "Pathfinder Playlist",
+                "content": {
+                    "items": [
+                        {
+                            "itemV2": {
+                                "data": {
+                                    "name": "Song 1",
+                                    "artists": {"items": [{"profile": {"name": "Artist 1"}}]},
+                                }
+                            }
+                        },
+                        {
+                            "itemV2": {
+                                "data": {
+                                    "name": "Song 2",
+                                    "artists": {"items": [{"profile": {"name": "Artist 2"}}]},
+                                }
+                            }
+                        },
+                    ],
+                    "pagingInfo": {"nextOffset": 2},
+                },
+            }
+        }
+    }
+    pathfinder_page_2 = {
+        "data": {
+            "playlistV2": {
+                "name": "Pathfinder Playlist",
+                "content": {
+                    "items": [
+                        {
+                            "itemV2": {
+                                "data": {
+                                    "name": "Song 3",
+                                    "artists": {"items": [{"profile": {"name": "Artist 3"}}]},
+                                }
+                            }
+                        }
+                    ],
+                    "pagingInfo": {"nextOffset": None},
+                },
+            }
+        }
+    }
+    http_service = DummyHttpService(
+        post_json_payload={"access_token": "token", "expires_in": 3600},
+        json_by_url={
+            playlist_info_url: {"name": "API Playlist Name"},
+            playlist_tracks_url: HttpRequestError(
+                status=403,
+                url=playlist_tracks_url,
+                body='{"error":{"status":403,"message":"Forbidden"}}',
+            ),
+        },
+        post_json_by_url={
+            SpotifyService.PATHFINDER_URL: [pathfinder_page_0, pathfinder_page_2],
+        },
+    )
+    service = SpotifyService(
+        http_service=http_service,
+        client_id="client",
+        client_secret="secret",
+    )
+
+    payload = await service.resolve_for_enqueue(
+        f"https://open.spotify.com/playlist/{playlist_id}",
+        initial_limit=2,
+    )
+
+    assert payload["kind"] == "playlist"
+    assert payload["display_title"] == "API Playlist Name"
+    assert payload["initial_queries"] == [
+        "Artist 1 - Song 1",
+        "Artist 2 - Song 2",
+    ]
+    deferred = payload["deferred_cursor"]
+    assert deferred["kind"] == "prefetched"
+
+    batch_queries, next_cursor = await service.fetch_deferred_queries(deferred, batch_size=50)
+    assert batch_queries == ["Artist 3 - Song 3"]
+    assert next_cursor is None
 
 
 @pytest.mark.asyncio

@@ -591,11 +591,13 @@ class MediaPlaybackService:
             skipped = int(enqueue_stats["skipped"] or 0)
             kind = str(payload.get("kind") or "track")
             title = str(payload.get("display_title") or enqueue_stats.get("first_title") or "")
+            fallback_mode = str(payload.get("fallback_mode") or "").strip()
 
             await log(
                 "INFO: Spotify import processed "
                 f"(kind={kind}, added={added}, skipped={skipped}, deferred="
-                f"{'yes' if payload.get('deferred_cursor') else 'no'})"
+                f"{'yes' if payload.get('deferred_cursor') else 'no'}, "
+                f"fallback={fallback_mode or 'none'})"
             )
             return {
                 "added": added,

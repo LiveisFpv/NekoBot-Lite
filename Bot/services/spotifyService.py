@@ -33,6 +33,9 @@ class SpotifyService:
     TOKEN_URL = "https://accounts.spotify.com/api/token"
     API_BASE = "https://api.spotify.com/v1"
     MAX_PAGE_LIMIT = 50
+    PATHFINDER_URL = "https://api-partner.spotify.com/pathfinder/v1/query"
+    PATHFINDER_QUERY_PLAYLIST_OPERATION = "queryPlaylist"
+    PATHFINDER_QUERY_PLAYLIST_HASH = "2888863ae48f035d0177d73c88f389e7946a95d49a8883a26e86aebd02f2ed24"
     _INITIAL_STATE_RE = re.compile(
         r'<script id="initialState"[^>]*>(.*?)</script>',
         re.IGNORECASE | re.DOTALL,
@@ -191,6 +194,19 @@ class SpotifyService:
             ) from exc
         return payload if isinstance(payload, dict) else {}
 
+    async def _post_json(self, url: str, data: dict) -> dict:
+        headers = await self._auth_headers()
+        try:
+            payload = await self.http_service.post_json(url, data=data, headers=headers)
+        except Exception as exc:
+            details = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, HttpRequestError):
+                details = f"{type(exc).__name__}: status={exc.status}, body={exc.body[:300]}"
+            raise SpotifyApiError(
+                f"Spotify API request failed: {url} ({details})"
+            ) from exc
+        return payload if isinstance(payload, dict) else {}
+
     @staticmethod
     def _is_forbidden_error(exc: Exception) -> bool:
         cause = getattr(exc, "__cause__", None)
@@ -301,6 +317,98 @@ class SpotifyService:
 
         return display_title, queries
 
+    @staticmethod
+    def _track_query_from_item_v2(item_v2: dict | None) -> str:
+        track_data = item_v2.get("data") if isinstance(item_v2, dict) else None
+        if not isinstance(track_data, dict):
+            return ""
+
+        name = str(track_data.get("name") or "").strip()
+        artists: list[str] = []
+        artists_payload = track_data.get("artists")
+        artists_items = artists_payload.get("items") if isinstance(artists_payload, dict) else []
+        if isinstance(artists_items, list):
+            for artist_entry in artists_items:
+                if not isinstance(artist_entry, dict):
+                    continue
+                profile = artist_entry.get("profile")
+                artist_name = (
+                    str(profile.get("name") or "").strip()
+                    if isinstance(profile, dict)
+                    else ""
+                )
+                if not artist_name:
+                    artist_name = str(artist_entry.get("name") or "").strip()
+                if artist_name:
+                    artists.append(artist_name)
+
+        return SpotifyService.build_search_query(name, artists)
+
+    async def _fetch_playlist_queries_via_pathfinder(
+        self,
+        playlist_id: str,
+        *,
+        limit: int | None = None,
+    ) -> tuple[str, list[str]]:
+        playlist_uri = f"spotify:playlist:{playlist_id}"
+        offset = 0
+        page_limit = 50
+        max_items = None if limit is None else max(1, int(limit))
+        display_title = playlist_id
+        queries: list[str] = []
+        seen: set[str] = set()
+
+        while True:
+            payload = await self._post_json(
+                self.PATHFINDER_URL,
+                data={
+                    "operationName": self.PATHFINDER_QUERY_PLAYLIST_OPERATION,
+                    "variables": {
+                        "uri": playlist_uri,
+                        "offset": offset,
+                        "limit": page_limit,
+                    },
+                    "extensions": {
+                        "persistedQuery": {
+                            "version": 1,
+                            "sha256Hash": self.PATHFINDER_QUERY_PLAYLIST_HASH,
+                        }
+                    },
+                },
+            )
+
+            data_payload = payload.get("data") if isinstance(payload, dict) else None
+            playlist_payload = (
+                data_payload.get("playlistV2") if isinstance(data_payload, dict) else None
+            )
+            if not isinstance(playlist_payload, dict):
+                break
+
+            current_title = str(playlist_payload.get("name") or "").strip()
+            if current_title:
+                display_title = current_title
+
+            content = playlist_payload.get("content") or {}
+            items = content.get("items") if isinstance(content, dict) else []
+            if isinstance(items, list):
+                for entry in items:
+                    item_v2 = entry.get("itemV2") if isinstance(entry, dict) else None
+                    query = self._track_query_from_item_v2(item_v2)
+                    if not query or query in seen:
+                        continue
+                    seen.add(query)
+                    queries.append(query)
+                    if max_items is not None and len(queries) >= max_items:
+                        return display_title, queries
+
+            paging_info = content.get("pagingInfo") if isinstance(content, dict) else {}
+            next_offset = paging_info.get("nextOffset") if isinstance(paging_info, dict) else None
+            if not isinstance(next_offset, int) or next_offset <= offset:
+                break
+            offset = next_offset
+
+        return display_title, queries
+
     @classmethod
     def _extract_playlist_title_from_html(cls, html: str, fallback: str) -> str:
         match = cls._OG_TITLE_RE.search(html or "")
@@ -377,6 +485,24 @@ class SpotifyService:
             return [], None
 
         kind = str(cursor.get("kind") or "").strip().lower()
+        if kind == "prefetched":
+            all_queries_raw = cursor.get("queries")
+            if not isinstance(all_queries_raw, list):
+                return [], None
+            all_queries = [str(item or "").strip() for item in all_queries_raw if str(item or "").strip()]
+            index = max(0, int(cursor.get("index") or 0))
+            page_limit = max(1, min(int(batch_size), self.MAX_PAGE_LIMIT))
+            next_index = min(len(all_queries), index + page_limit)
+            current_batch = all_queries[index:next_index]
+            if next_index >= len(all_queries):
+                return current_batch, None
+            return current_batch, {
+                "kind": "prefetched",
+                "queries": all_queries,
+                "index": next_index,
+                "display_title": str(cursor.get("display_title") or "").strip(),
+            }
+
         entity_id = str(cursor.get("entity_id") or "").strip()
         display_title = str(cursor.get("display_title") or "").strip()
         offset = int(cursor.get("offset") or 0)
@@ -455,6 +581,32 @@ class SpotifyService:
             except SpotifyApiError as exc:
                 if not self._is_forbidden_error(exc):
                     raise
+                try:
+                    pf_title, pf_queries = await self._fetch_playlist_queries_via_pathfinder(
+                        reference.entity_id,
+                        limit=None,
+                    )
+                except SpotifyApiError:
+                    pf_title, pf_queries = "", []
+                if pf_queries:
+                    initial = pf_queries[:limit]
+                    deferred_cursor = (
+                        {
+                            "kind": "prefetched",
+                            "queries": pf_queries,
+                            "index": len(initial),
+                            "display_title": pf_title or reference.entity_id,
+                        }
+                        if len(pf_queries) > len(initial)
+                        else None
+                    )
+                    return {
+                        "kind": "playlist",
+                        "display_title": pf_title or reference.entity_id,
+                        "initial_queries": initial,
+                        "deferred_cursor": deferred_cursor,
+                        "fallback_mode": "pathfinder",
+                    }
                 display_title, web_queries = await self._resolve_public_playlist_via_web(
                     reference.entity_id,
                     limit=limit,
@@ -469,6 +621,7 @@ class SpotifyService:
                     "display_title": display_title,
                     "initial_queries": web_queries[:limit],
                     "deferred_cursor": None,
+                    "fallback_mode": "web",
                 }
         else:
             display_title = await self._get_album_name(reference.entity_id)
@@ -497,6 +650,33 @@ class SpotifyService:
             if reference.kind != "playlist" or not self._is_forbidden_error(exc):
                 raise
 
+            try:
+                pf_title, pf_queries = await self._fetch_playlist_queries_via_pathfinder(
+                    reference.entity_id,
+                    limit=None,
+                )
+            except SpotifyApiError:
+                pf_title, pf_queries = "", []
+            if pf_queries:
+                initial = pf_queries[:limit]
+                deferred_cursor = (
+                    {
+                        "kind": "prefetched",
+                        "queries": pf_queries,
+                        "index": len(initial),
+                        "display_title": display_title or pf_title or reference.entity_id,
+                    }
+                    if len(pf_queries) > len(initial)
+                    else None
+                )
+                return {
+                    "kind": "playlist",
+                    "display_title": display_title or pf_title or reference.entity_id,
+                    "initial_queries": initial,
+                    "deferred_cursor": deferred_cursor,
+                    "fallback_mode": "pathfinder",
+                }
+
             web_title, web_queries = await self._resolve_public_playlist_via_web(
                 reference.entity_id,
                 limit=limit,
@@ -521,9 +701,37 @@ class SpotifyService:
                 "display_title": display_title or web_title,
                 "initial_queries": merged,
                 "deferred_cursor": None,
+                "fallback_mode": "web",
             }
 
         if reference.kind == "playlist" and not initial_queries:
+            try:
+                pf_title, pf_queries = await self._fetch_playlist_queries_via_pathfinder(
+                    reference.entity_id,
+                    limit=None,
+                )
+            except SpotifyApiError:
+                pf_title, pf_queries = "", []
+            if pf_queries:
+                initial = pf_queries[:limit]
+                deferred_cursor = (
+                    {
+                        "kind": "prefetched",
+                        "queries": pf_queries,
+                        "index": len(initial),
+                        "display_title": display_title or pf_title or reference.entity_id,
+                    }
+                    if len(pf_queries) > len(initial)
+                    else None
+                )
+                return {
+                    "kind": "playlist",
+                    "display_title": display_title or pf_title or reference.entity_id,
+                    "initial_queries": initial,
+                    "deferred_cursor": deferred_cursor,
+                    "fallback_mode": "pathfinder",
+                }
+
             try:
                 web_title, web_queries = await self._resolve_public_playlist_via_web(
                     reference.entity_id,
@@ -538,6 +746,7 @@ class SpotifyService:
                     "display_title": display_title or web_title,
                     "initial_queries": web_queries[:limit],
                     "deferred_cursor": None,
+                    "fallback_mode": "web",
                 }
 
         return {

@@ -77,3 +77,23 @@ class HttpService:
                     body = await response.text()
                     raise HttpRequestError(status=response.status, url=url, body=body)
                 return await response.json(content_type=None)
+
+    async def post_json(self, url: str, data: dict, headers: dict | None = None):
+        if aiohttp is None:
+            raise RuntimeError("aiohttp is not installed")
+        timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+        request_headers = {"Content-Type": "application/json"}
+        if headers:
+            request_headers.update(headers)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                url,
+                json=data,
+                headers=request_headers,
+                **self._proxy_kwargs(),
+            ) as response:
+                if response.status >= 400:
+                    body = await response.text()
+                    raise HttpRequestError(status=response.status, url=url, body=body)
+                return await response.json(content_type=None)
