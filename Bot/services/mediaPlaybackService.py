@@ -9,6 +9,7 @@ import discord
 
 from Music_player.music_player import playerView
 from services.mediaService import MediaPlayer
+from services.spotifyService import SpotifyApiError, SpotifyService
 from utils.utils import log
 
 try:
@@ -42,6 +43,7 @@ class MediaPlaybackService:
     SOUNDCLOUD_PREVIEW_MAX_MS = 32000
     YANDEX_AD_MIN_MS = 12000
     YANDEX_AD_MAX_MS = 45000
+    SPOTIFY_INITIAL_LIMIT = 100
 
     PLATFORM_STYLES: dict[str, PlatformStyle] = {
         "youtube": PlatformStyle(
@@ -80,8 +82,12 @@ class MediaPlaybackService:
         self,
         *,
         default_volume: int = 100,
+        spotify_service: SpotifyService | None = None,
+        spotify_initial_limit: int = SPOTIFY_INITIAL_LIMIT,
     ):
         self.default_volume = default_volume
+        self.spotify_service = spotify_service or SpotifyService()
+        self.spotify_initial_limit = max(1, int(spotify_initial_limit))
 
     @staticmethod
     def _normalize_text(value: object) -> str:
@@ -295,6 +301,131 @@ class MediaPlaybackService:
 
         tracks = list(result)
         return tracks[0] if tracks else None
+
+    async def enqueue_spotify_queries(
+        self,
+        player,
+        queries: list[str],
+        *,
+        state: MediaPlayer | None = None,
+        source_platform: str = "spotify",
+    ) -> dict[str, int | str | None]:
+        added = 0
+        skipped = 0
+        first_title: str | None = None
+
+        for query in list(queries or []):
+            query_text = str(query or "").strip()
+            if not query_text:
+                skipped += 1
+                continue
+
+            resolved_track = await self.search_youtube_music_track(query_text)
+            if resolved_track is None:
+                skipped += 1
+                continue
+
+            resolved_track = await self.resolve_track_for_playback(resolved_track)
+            await self._attach_track_platform_meta(
+                state,
+                resolved_track,
+                resolved_track,
+                source_platform=source_platform,
+            )
+
+            added += player.queue.put(resolved_track)
+            if first_title is None:
+                first_title = MediaPlayer.get_track_title(resolved_track)
+
+        return {
+            "added": added,
+            "skipped": skipped,
+            "first_title": first_title,
+        }
+
+    async def _enqueue_spotify_collection_hybrid(
+        self,
+        player,
+        query: str,
+        *,
+        state: MediaPlayer | None,
+        kind: str,
+    ) -> dict:
+        lavalink_error: Exception | None = None
+        try:
+            result = await self.resolve_tracks(query)
+        except Exception as exc:
+            result = []
+            lavalink_error = exc
+            await log(
+                "WARNING: Spotify collection Lavalink resolve failed, switching to web fallback: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+        if result:
+            if self._is_playlist_result(result):
+                added = 0
+                for original_track in list(result):
+                    track = await self.resolve_track_for_playback(original_track)
+                    await self._attach_track_platform_meta(
+                        state,
+                        original_track,
+                        track,
+                        source_platform="spotify",
+                    )
+                    added += player.queue.put(track)
+                return {
+                    "added": added,
+                    "title": result.name,
+                    "is_playlist": True,
+                }
+
+            tracks = list(result)
+            if tracks:
+                added = 0
+                for original_track in tracks:
+                    track = await self.resolve_track_for_playback(original_track)
+                    await self._attach_track_platform_meta(
+                        state,
+                        original_track,
+                        track,
+                        source_platform="spotify",
+                    )
+                    added += player.queue.put(track)
+
+                fallback_title = MediaPlayer.get_track_title(tracks[0])
+                return {
+                    "added": added,
+                    "title": fallback_title,
+                    "is_playlist": True,
+                }
+
+        payload = await self.spotify_service.resolve_for_enqueue(
+            query,
+            initial_limit=self.spotify_initial_limit,
+        )
+        enqueue_stats = await self.enqueue_spotify_queries(
+            player,
+            payload.get("initial_queries") or [],
+            state=state,
+            source_platform="spotify",
+        )
+
+        added = int(enqueue_stats.get("added") or 0)
+        skipped = int(enqueue_stats.get("skipped") or 0)
+        display_title = str(payload.get("display_title") or "").strip() or str(payload.get("kind") or kind)
+
+        await log(
+            "INFO: Spotify collection processed via web fallback "
+            f"(kind={kind}, added={added}, skipped={skipped}, "
+            f"lavalink_failed={'yes' if lavalink_error is not None else 'no'})"
+        )
+
+        return {
+            "added": added,
+            "title": display_title,
+            "is_playlist": True,
+        }
 
     async def resolve_track_for_playback(
         self,
@@ -526,6 +657,20 @@ class MediaPlaybackService:
                 "title": MediaPlayer.get_track_title(first),
                 "is_playlist": False,
             }
+
+        if self.is_spotify_url(query):
+            try:
+                reference = self.spotify_service.parse_spotify_url(query)
+            except SpotifyApiError:
+                reference = None
+
+            if reference is not None and reference.kind in {"playlist", "album", "artist"}:
+                return await self._enqueue_spotify_collection_hybrid(
+                    player,
+                    query,
+                    state=state,
+                    kind=reference.kind,
+                )
 
         result = await self.resolve_tracks(query)
         force_soundcloud_fallback = self.is_soundcloud_url(query)

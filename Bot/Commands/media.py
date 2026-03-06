@@ -11,6 +11,7 @@ from services.mediaPlaybackService import (
     YandexMusicConfigError,
 )
 from services.mediaService import MediaPlayer
+from services.spotifyService import SpotifyApiError, SpotifyConfigError
 from utils.utils import log
 
 try:
@@ -361,6 +362,22 @@ class MediaCommands(commands.Cog):
                     ctx,
                     "Yandex Music недоступен на сервере или по данному URL.",
                 )
+            return
+        except (SpotifyConfigError, SpotifyApiError) as exc:
+            cause = getattr(exc, "__cause__", None)
+            cause_text = (
+                f"{type(cause).__name__}: {cause}" if cause is not None else "None"
+            )
+            error_line = (
+                "ERROR: Spotify enqueue failed "
+                f"(type={type(exc).__name__}, message={exc}, cause={cause_text})"
+            )
+            await log(error_line)
+            print(error_line)
+            await self._send_ctx_message(
+                ctx,
+                "Spotify недоступен для этого URL. Попробуйте позже или другой Spotify источник.",
+            )
             return
         except Exception as exc:
             await log(f"ERROR: enqueue_query failed: {exc}")

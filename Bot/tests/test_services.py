@@ -3,6 +3,7 @@ import json
 import os
 import sys
 from types import SimpleNamespace
+from urllib.parse import quote
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -19,6 +20,7 @@ from services.mediaPlaybackService import (
 )
 from services.mediaService import MediaPlayer
 from services.memeService import MemeService
+from services.spotifyService import SpotifyApiError, SpotifyService
 from Commands.media import MediaCommands
 
 
@@ -153,6 +155,72 @@ async def test_meme_service_translate_to_ru():
         result = await service.translate_to_ru("hello")
 
     assert result == "привет"
+
+
+@pytest.mark.asyncio
+async def test_spotify_service_resolve_playlist_from_script_payload():
+    playlist_id = "PL123"
+    page_url = f"https://open.spotify.com/playlist/{playlist_id}"
+    page_html = """
+    <meta property="og:title" content="Script Playlist">
+    <script id="initial-state" type="application/json">
+    {
+      "data": {
+        "items": [
+          {"type":"track","name":"Song A","artists":[{"name":"Artist A"}]},
+          {"__typename":"Track","name":"Song B","artists":{"items":[{"profile":{"name":"Artist B"}}]}}
+        ]
+      }
+    }
+    </script>
+    """
+    http_service = DummyHttpService(text_by_url={page_url: page_html})
+    service = SpotifyService(http_service=http_service)
+
+    payload = await service.resolve_for_enqueue(page_url, initial_limit=10)
+
+    assert payload["kind"] == "playlist"
+    assert payload["display_title"] == "Script Playlist"
+    assert payload["initial_queries"] == ["Artist A - Song A", "Artist B - Song B"]
+
+
+@pytest.mark.asyncio
+async def test_spotify_service_resolve_playlist_uses_oembed_fallback():
+    playlist_id = "PL_OEMBED"
+    page_url = f"https://open.spotify.com/playlist/{playlist_id}"
+    track_url = "https://open.spotify.com/track/265jHUE2zMARKwtIhkknsS"
+    oembed_url = f"https://open.spotify.com/oembed?url={quote(track_url, safe='')}"
+
+    page_html = f"""
+    <meta property="og:title" content="Fallback Playlist">
+    <a href="{track_url}">track</a>
+    """
+    http_service = DummyHttpService(
+        text_by_url={page_url: page_html},
+        json_by_url={
+            oembed_url: {
+                "title": "Numb",
+                "author_name": "Linkin Park",
+            }
+        },
+    )
+    service = SpotifyService(http_service=http_service)
+
+    payload = await service.resolve_for_enqueue(page_url, initial_limit=10)
+
+    assert payload["display_title"] == "Fallback Playlist"
+    assert payload["initial_queries"] == ["Linkin Park - Numb"]
+
+
+@pytest.mark.asyncio
+async def test_spotify_service_resolve_collection_raises_when_no_tracks():
+    album_url = "https://open.spotify.com/album/ALB_EMPTY"
+    page_html = '<meta property="og:title" content="Empty Album">'
+    http_service = DummyHttpService(text_by_url={album_url: page_html})
+    service = SpotifyService(http_service=http_service)
+
+    with pytest.raises(SpotifyApiError):
+        await service.resolve_for_enqueue(album_url, initial_limit=10)
 
 
 class DummyTrack:
@@ -433,17 +501,107 @@ async def test_media_playback_service_enqueue_spotify_playlist_via_lavalink_sets
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_enqueue_spotify_url_empty_result(monkeypatch):
-    service = MediaPlaybackService()
+async def test_media_playback_service_enqueue_spotify_playlist_uses_web_fallback(monkeypatch):
+    spotify_service = SimpleNamespace(
+        parse_spotify_url=lambda _: SimpleNamespace(kind="playlist", entity_id="pl1"),
+        resolve_for_enqueue=AsyncMock(
+            return_value={
+                "kind": "playlist",
+                "display_title": "Fallback Playlist",
+                "initial_queries": ["Artist A - Song A", "Artist B - Song B"],
+                "deferred_cursor": None,
+            }
+        ),
+    )
+    service = MediaPlaybackService(spotify_service=spotify_service)
     player = DummyPlayer()
-    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=[]))
+    state = MediaPlayer()
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(side_effect=RuntimeError("Lavalink 403")))
+    monkeypatch.setattr(
+        service,
+        "search_youtube_music_track",
+        AsyncMock(
+            side_effect=[
+                DummyTrack("Song A", uri="https://youtube.com/watch?v=a"),
+                DummyTrack("Song B", uri="https://youtube.com/watch?v=b"),
+            ]
+        ),
+    )
 
     result = await service.enqueue_query(
         player,
-        "https://open.spotify.com/album/alb1",
+        "https://open.spotify.com/playlist/pl1",
+        state,
     )
 
-    assert result == {"added": 0, "title": None, "is_playlist": False}
+    assert result["added"] == 2
+    assert result["is_playlist"] is True
+    assert result["title"] == "Fallback Playlist"
+    queue_items = list(player.queue)
+    assert await state.get_track_platforms(queue_items[0]) == ("spotify", "youtube")
+    assert await state.get_track_platforms(queue_items[1]) == ("spotify", "youtube")
+    spotify_service.resolve_for_enqueue.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "url"),
+    [
+        ("album", "https://open.spotify.com/album/alb1"),
+        ("artist", "https://open.spotify.com/artist/ar1"),
+    ],
+)
+async def test_media_playback_service_enqueue_spotify_collection_uses_web_fallback(
+    monkeypatch,
+    kind,
+    url,
+):
+    spotify_service = SimpleNamespace(
+        parse_spotify_url=lambda _: SimpleNamespace(kind=kind, entity_id="id1"),
+        resolve_for_enqueue=AsyncMock(
+            return_value={
+                "kind": kind,
+                "display_title": f"Fallback {kind}",
+                "initial_queries": ["Artist X - Song X"],
+                "deferred_cursor": None,
+            }
+        ),
+    )
+    service = MediaPlaybackService(spotify_service=spotify_service)
+    player = DummyPlayer()
+    state = MediaPlayer()
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        service,
+        "search_youtube_music_track",
+        AsyncMock(return_value=DummyTrack("Song X", uri="https://youtube.com/watch?v=x")),
+    )
+
+    result = await service.enqueue_query(player, url, state)
+
+    assert result["added"] == 1
+    assert result["is_playlist"] is True
+    assert result["title"] == f"Fallback {kind}"
+    queued_track = list(player.queue)[0]
+    assert await state.get_track_platforms(queued_track) == ("spotify", "youtube")
+    spotify_service.resolve_for_enqueue.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_spotify_collection_fallback_error(monkeypatch):
+    spotify_service = SimpleNamespace(
+        parse_spotify_url=lambda _: SimpleNamespace(kind="album", entity_id="alb1"),
+        resolve_for_enqueue=AsyncMock(side_effect=SpotifyApiError("fallback failed")),
+    )
+    service = MediaPlaybackService(spotify_service=spotify_service)
+    player = DummyPlayer()
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=[]))
+
+    with pytest.raises(SpotifyApiError):
+        await service.enqueue_query(
+            player,
+            "https://open.spotify.com/album/alb1",
+        )
 
 
 @pytest.mark.asyncio
