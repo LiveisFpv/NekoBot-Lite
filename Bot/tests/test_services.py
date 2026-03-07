@@ -614,15 +614,25 @@ async def test_media_playback_service_enqueue_yandex_track_sets_meta(monkeypatch
         uri="https://music.yandex.ru/album/1/track/2",
         source="yandexmusic",
     )
+    youtube_track = DummyTrack(
+        "YM Song (YT)",
+        uri="https://music.youtube.com/watch?v=yt-ym-song",
+        source="youtube",
+    )
 
     monkeypatch.setenv("YANDEX_TOKEN", "token")
     monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=[yandex_track]))
+    resolver_mock = AsyncMock(return_value=youtube_track)
+    monkeypatch.setattr(service, "resolve_yandex_track_for_playback", resolver_mock)
 
     result = await service.enqueue_query(player, "https://music.yandex.ru/album/1/track/2", state)
 
     assert result["added"] == 1
     assert result["is_playlist"] is False
-    assert await state.get_track_platforms(yandex_track) == ("yandexmusic", "yandexmusic")
+    assert result["title"] == "YM Song (YT)"
+    assert list(player.queue)[0] is youtube_track
+    resolver_mock.assert_awaited_once_with(yandex_track)
+    assert await state.get_track_platforms(youtube_track) == ("yandexmusic", "youtube")
 
 
 @pytest.mark.asyncio
@@ -630,28 +640,37 @@ async def test_media_playback_service_enqueue_yandex_playlist(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()
     state = MediaPlayer()
+    track_a = DummyTrack("A", uri="https://music.yandex.ru/album/1/track/10", source="yandexmusic")
+    track_b = DummyTrack("B", uri="https://music.yandex.ru/album/1/track/11", source="yandexmusic")
     playlist = DummyPlaylist(
         "YM List",
         [
-            DummyTrack("A", uri="https://music.yandex.ru/album/1/track/10", source="yandexmusic"),
-            DummyTrack("B", uri="https://music.yandex.ru/album/1/track/11", source="yandexmusic"),
+            track_a,
+            track_b,
         ],
     )
+    youtube_a = DummyTrack("A (YT)", uri="https://music.youtube.com/watch?v=yt-a", source="youtube")
+    youtube_b = DummyTrack("B (YT)", uri="https://music.youtube.com/watch?v=yt-b", source="youtube")
 
     monkeypatch.setenv("YANDEX_TOKEN", "token")
     monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
     monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=playlist))
+    resolver_mock = AsyncMock(side_effect=[youtube_a, youtube_b])
+    monkeypatch.setattr(service, "resolve_yandex_track_for_playback", resolver_mock)
 
     result = await service.enqueue_query(player, "https://music.yandex.ru/users/a/playlists/1", state)
 
     assert result["is_playlist"] is True
     assert result["added"] == 2
-    first_track = list(player.queue)[0]
-    assert await state.get_track_platforms(first_track) == ("yandexmusic", "yandexmusic")
+    assert list(player.queue) == [youtube_a, youtube_b]
+    assert await state.get_track_platforms(youtube_a) == ("yandexmusic", "youtube")
+    assert await state.get_track_platforms(youtube_b) == ("yandexmusic", "youtube")
+    assert resolver_mock.await_args_list[0].args == (track_a,)
+    assert resolver_mock.await_args_list[1].args == (track_b,)
 
 
 @pytest.mark.asyncio
-async def test_media_playback_service_enqueue_yandex_playlist_skips_ads(monkeypatch):
+async def legacy_test_media_playback_service_enqueue_yandex_playlist_skips_ads(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()
     state = MediaPlayer()
@@ -673,6 +692,92 @@ async def test_media_playback_service_enqueue_yandex_playlist_skips_ads(monkeypa
     assert result["added"] == 2
     queue_titles = [item.title for item in list(player.queue)]
     assert queue_titles == ["Song A", "Song B"]
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_yandex_playlist_skips_ads_and_unmatched(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    state = MediaPlayer()
+    track_a = DummyTrack("Song A", uri="https://music.yandex.ru/album/1/track/10", source="yandexmusic")
+    ad_track = DummyTrack(
+        "Advertisement",
+        uri="https://music.yandex.ru/album/1/track/11",
+        source="yandexmusic",
+        plugin_info={"type": "ad"},
+    )
+    track_b = DummyTrack("Song B", uri="https://music.yandex.ru/album/1/track/12", source="yandexmusic")
+    playlist = DummyPlaylist(
+        "YM List",
+        [
+            track_a,
+            ad_track,
+            track_b,
+        ],
+    )
+    youtube_a = DummyTrack("Song A (YT)", uri="https://music.youtube.com/watch?v=yt-song-a", source="youtube")
+
+    monkeypatch.setenv("YANDEX_TOKEN", "token")
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=playlist))
+    resolver_mock = AsyncMock(side_effect=[youtube_a, None])
+    monkeypatch.setattr(service, "resolve_yandex_track_for_playback", resolver_mock)
+
+    result = await service.enqueue_query(player, "https://music.yandex.ru/users/a/playlists/1", state)
+
+    assert result["added"] == 1
+    queue_titles = [item.title for item in list(player.queue)]
+    assert queue_titles == ["Song A (YT)"]
+    assert resolver_mock.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_yandex_track_without_youtube_match_raises(monkeypatch):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    yandex_track = DummyTrack(
+        "YM Song",
+        uri="https://music.yandex.ru/album/1/track/2",
+        source="yandexmusic",
+    )
+
+    monkeypatch.setenv("YANDEX_TOKEN", "token")
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=[yandex_track]))
+    monkeypatch.setattr(
+        service,
+        "resolve_yandex_track_for_playback",
+        AsyncMock(return_value=None),
+    )
+
+    with pytest.raises(YandexMusicApiError, match="could not be resolved via YouTube Music"):
+        await service.enqueue_query(player, "https://music.yandex.ru/album/1/track/2")
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_enqueue_yandex_playlist_raises_when_no_youtube_matches(
+    monkeypatch,
+):
+    service = MediaPlaybackService()
+    player = DummyPlayer()
+    playlist = DummyPlaylist(
+        "YM List",
+        [
+            DummyTrack("Song A", uri="https://music.yandex.ru/album/1/track/10", source="yandexmusic"),
+            DummyTrack("Song B", uri="https://music.yandex.ru/album/1/track/12", source="yandexmusic"),
+        ],
+    )
+
+    monkeypatch.setenv("YANDEX_TOKEN", "token")
+    monkeypatch.setattr("services.mediaPlaybackService.wavelink", DummyWavelink)
+    monkeypatch.setattr(service, "resolve_tracks", AsyncMock(return_value=playlist))
+    monkeypatch.setattr(
+        service,
+        "resolve_yandex_track_for_playback",
+        AsyncMock(side_effect=[None, None]),
+    )
+
+    with pytest.raises(YandexMusicApiError, match="returned no playable tracks via YouTube Music"):
+        await service.enqueue_query(player, "https://music.yandex.ru/users/a/playlists/1")
 
 
 def test_media_playback_service_is_yandex_ad_track():
@@ -831,6 +936,50 @@ async def test_media_playback_service_resolve_track_for_playback_uses_youtube_fa
 
 
 @pytest.mark.asyncio
+async def test_media_playback_service_resolve_yandex_track_for_playback_uses_youtube_fallback(
+    monkeypatch,
+):
+    service = MediaPlaybackService()
+    yandex_track = DummyTrack(
+        "YM Song",
+        uri="https://music.yandex.ru/album/1/track/2",
+        source="yandexmusic",
+        artist="Artist",
+    )
+    fallback_track = DummyTrack(
+        "Fallback",
+        uri="https://music.youtube.com/watch?v=ym-fallback",
+        source="youtube",
+    )
+
+    monkeypatch.setattr(service, "search_youtube_music_fallback", AsyncMock(return_value=fallback_track))
+
+    resolved = await service.resolve_yandex_track_for_playback(yandex_track)
+
+    assert resolved is fallback_track
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_resolve_yandex_track_for_playback_returns_none_for_ad(
+    monkeypatch,
+):
+    service = MediaPlaybackService()
+    ad_track = DummyTrack(
+        "Advertisement",
+        uri="https://music.yandex.ru/album/1/track/2",
+        source="yandexmusic",
+        plugin_info={"type": "ad"},
+    )
+    search_mock = AsyncMock(return_value=DummyTrack("Should Not Happen"))
+    monkeypatch.setattr(service, "search_youtube_music_fallback", search_mock)
+
+    resolved = await service.resolve_yandex_track_for_playback(ad_track)
+
+    assert resolved is None
+    search_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_media_playback_service_enqueue_single_track_replaces_soundcloud_preview(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()
@@ -945,20 +1094,24 @@ async def test_media_playback_service_build_embed_yandex_platform_style(monkeypa
     player = DummyPlayer()
     track = DummyTrack(
         "YM",
-        uri="https://music.yandex.ru/album/1/track/2",
-        source="yandexmusic",
+        uri="https://music.youtube.com/watch?v=ym",
+        source="youtube",
     )
     player.current = track
     state = MediaPlayer()
-    await state.set_track_platforms(track, added_from="yandexmusic", playback_via="yandexmusic")
+    await state.set_track_platforms(track, added_from="yandexmusic", playback_via="youtube")
 
-    monkeypatch.setattr(service, "_resolve_logo_filename", lambda platform_id: "yandex-music-logo.png")
+    monkeypatch.setattr(
+        service,
+        "_resolve_logo_filename",
+        lambda platform_id: "yandex-music-logo.png" if platform_id == "yandexmusic" else "youtube-logo.png",
+    )
 
     embed, required_logos = await service.build_now_playing_embed(player, state)
 
     assert embed.author.icon_url == "attachment://yandex-music-logo.png"
-    assert embed.footer.icon_url == "attachment://yandex-music-logo.png"
-    assert set(required_logos) == {"yandex-music-logo.png"}
+    assert embed.footer.icon_url == "attachment://youtube-logo.png"
+    assert set(required_logos) == {"yandex-music-logo.png", "youtube-logo.png"}
     assert int(embed.color) == MediaPlaybackService.get_platform_style("yandexmusic").color
 
 

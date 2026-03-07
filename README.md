@@ -92,7 +92,8 @@ Notes:
 - Spotify `track` is resolved by Lavalink + LavaSrc.
 - Spotify `playlist` / `album` / `artist` use hybrid mode: Lavalink first, then bot web fallback if Lavalink cannot resolve.
 - For Spotify anonymous token support, `spotify-tokener` is started in docker compose and used by LavaSrc.
-- Yandex Music playback uses Lavalink + LavaSrc and may require proxy in region-restricted environments.
+- Yandex Music URLs are resolved through Lavalink + LavaSrc for metadata, then played via YouTube Music matches to avoid direct Yandex ad playback.
+- `YANDEX_TOKEN` is still required for Yandex Music URLs because the bot still needs Yandex metadata resolution.
 
 Game:
 
@@ -127,7 +128,7 @@ Spotify:
 Yandex Music:
 
 - `YANDEX_TOKEN`
-- `YANDEX_PROXY_URL` (optional)
+- `YANDEX_PROXY_URL` (optional, proxy for Yandex metadata resolution only)
 - `YANDEX_PROXY_USERNAME` (optional)
 - `YANDEX_PROXY_PASSWORD` (optional)
 
