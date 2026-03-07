@@ -302,6 +302,12 @@ class MediaPlaybackService:
         tracks = list(result)
         return tracks[0] if tracks else None
 
+    async def resolve_yandex_track_for_playback(self, track):
+        if track is None or self.is_yandex_ad_track(track):
+            return None
+
+        return await self.search_youtube_music_fallback(track)
+
     async def enqueue_spotify_queries(
         self,
         player,
@@ -613,16 +619,26 @@ class MediaPlaybackService:
 
             source_platform = "yandexmusic"
 
-            if self._is_playlist_result(result):
+            original_tracks = list(result)
+
+            if self._is_playlist_result(result) or len(original_tracks) > 1:
                 added = 0
-                for original_track in list(result):
+                ads_skipped = 0
+                unmatched = 0
+                total_seen = 0
+                display_title = str(getattr(result, "name", "") or "").strip() or "Yandex Music"
+
+                for original_track in original_tracks:
+                    total_seen += 1
                     if self.is_yandex_ad_track(original_track):
-                        await log(
-                            "INFO: Skipped Yandex Music ad track while enqueueing playlist: "
-                            f"{MediaPlayer.get_track_title(original_track)}"
-                        )
+                        ads_skipped += 1
                         continue
-                    track = await self.resolve_track_for_playback(original_track)
+
+                    track = await self.resolve_yandex_track_for_playback(original_track)
+                    if track is None:
+                        unmatched += 1
+                        continue
+
                     await self._attach_track_platform_meta(
                         state,
                         original_track,
@@ -630,31 +646,47 @@ class MediaPlaybackService:
                         source_platform=source_platform,
                     )
                     added += player.queue.put(track)
+
+                await log(
+                    "INFO: Yandex Music collection processed via YouTube playback "
+                    f"(title={display_title}, added={added}, ads_skipped={ads_skipped}, "
+                    f"unmatched={unmatched}, total_seen={total_seen})"
+                )
+
+                if added == 0:
+                    raise YandexMusicApiError(
+                        "Yandex Music URL returned no playable tracks via YouTube Music."
+                    )
+
                 return {
                     "added": added,
-                    "title": result.name,
+                    "title": display_title,
                     "is_playlist": True,
                 }
 
-            tracks = list(result)
-            tracks = [item for item in tracks if not self.is_yandex_ad_track(item)]
+            tracks = [item for item in original_tracks if not self.is_yandex_ad_track(item)]
             first = tracks[0] if tracks else None
             if first is None:
                 raise YandexMusicApiError(
                     "Yandex Music URL returned no playable tracks."
                 )
 
-            first = await self.resolve_track_for_playback(first)
+            resolved_track = await self.resolve_yandex_track_for_playback(first)
+            if resolved_track is None:
+                raise YandexMusicApiError(
+                    "Yandex Music track could not be resolved via YouTube Music."
+                )
+
             await self._attach_track_platform_meta(
                 state,
-                tracks[0],
                 first,
+                resolved_track,
                 source_platform=source_platform,
             )
-            added = player.queue.put(first)
+            added = player.queue.put(resolved_track)
             return {
                 "added": added,
-                "title": MediaPlayer.get_track_title(first),
+                "title": MediaPlayer.get_track_title(resolved_track),
                 "is_playlist": False,
             }
 
