@@ -1186,6 +1186,55 @@ async def test_media_playback_service_back_button_plays_previous():
 
 
 @pytest.mark.asyncio
+async def test_media_playback_service_handle_track_exception_plays_next_track(monkeypatch):
+    service = MediaPlaybackService(default_volume=55)
+    player = DummyPlayer()
+    state = MediaPlayer()
+    next_track = DummyTrack("Next", uri="https://youtube.com/watch?v=next", source="youtube")
+    resolved_track = DummyTrack("Resolved Next", uri="https://youtube.com/watch?v=resolved", source="youtube")
+    player.queue.put(next_track)
+
+    resolver_mock = AsyncMock(return_value=resolved_track)
+    monkeypatch.setattr(service, "resolve_track_for_playback", resolver_mock)
+
+    resumed = await service.handle_track_exception(player, state)
+
+    assert resumed is True
+    resolver_mock.assert_awaited_once_with(next_track)
+    assert player.current is resolved_track
+    assert player.play_calls[0][1]["replace"] is True
+    assert player.play_calls[0][1]["volume"] == 55
+    assert await state.get_track_platforms(resolved_track) == ("youtube", "youtube")
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_handle_track_exception_no_queue_noop():
+    service = MediaPlaybackService(default_volume=55)
+    player = DummyPlayer()
+    state = MediaPlayer()
+
+    resumed = await service.handle_track_exception(player, state)
+
+    assert resumed is False
+    assert player.play_calls == []
+
+
+@pytest.mark.asyncio
+async def test_media_playback_service_handle_track_exception_while_player_active_noop():
+    service = MediaPlaybackService(default_volume=55)
+    player = DummyPlayer()
+    state = MediaPlayer()
+    player.current = DummyTrack("Still Active", uri="https://youtube.com/watch?v=active", source="youtube")
+    player.playing = True
+    player.queue.put(DummyTrack("Next"))
+
+    resumed = await service.handle_track_exception(player, state)
+
+    assert resumed is False
+    assert player.play_calls == []
+
+
+@pytest.mark.asyncio
 async def test_media_playback_service_publish_now_playing_updates_existing(monkeypatch):
     service = MediaPlaybackService()
     player = DummyPlayer()
@@ -1326,6 +1375,56 @@ def test_media_commands_has_no_spotify_backfill_state():
 
     assert not hasattr(commands, "spotify_backfill_tasks")
     assert not hasattr(commands, "spotify_backfill_queues")
+
+
+@pytest.mark.asyncio
+async def test_media_commands_on_wavelink_track_exception_resets_error_count():
+    commands = MediaCommands(SimpleNamespace())
+    player = DummyPlayer()
+    player.guild = SimpleNamespace(id=999)
+    player._error_count = 3
+    payload = SimpleNamespace(player=player, exception="boom")
+
+    await commands.on_wavelink_track_exception(payload)
+
+    assert player._error_count == 0
+
+
+@pytest.mark.asyncio
+async def test_media_commands_on_wavelink_track_end_load_failed_continues_queue(monkeypatch):
+    commands = MediaCommands(SimpleNamespace())
+    player = DummyPlayer()
+    player.guild = SimpleNamespace(id=999)
+    payload = SimpleNamespace(player=player, reason="loadFailed")
+
+    monkeypatch.setattr("Commands.media.asyncio.sleep", AsyncMock())
+    handler_mock = AsyncMock(return_value=True)
+    commands.playback_service.handle_track_exception = handler_mock
+
+    await commands.on_wavelink_track_end(payload)
+
+    state = await commands.get_player_state(999)
+    handler_mock.assert_awaited_once_with(player, state)
+
+
+@pytest.mark.asyncio
+async def test_media_commands_on_wavelink_track_end_load_failed_skips_when_player_already_resumed(
+    monkeypatch,
+):
+    commands = MediaCommands(SimpleNamespace())
+    player = DummyPlayer()
+    player.guild = SimpleNamespace(id=999)
+    player.current = DummyTrack("Current", uri="https://youtube.com/watch?v=current", source="youtube")
+    player.playing = True
+    payload = SimpleNamespace(player=player, reason="loadFailed")
+
+    monkeypatch.setattr("Commands.media.asyncio.sleep", AsyncMock())
+    handler_mock = AsyncMock(return_value=True)
+    commands.playback_service.handle_track_exception = handler_mock
+
+    await commands.on_wavelink_track_end(payload)
+
+    handler_mock.assert_not_awaited()
 
 
 def test_lavalink_service_from_env(monkeypatch):

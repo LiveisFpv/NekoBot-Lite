@@ -312,6 +312,23 @@ class MediaCommands(commands.Cog):
             return
         self._cancel_progress_task(player.guild.id)
 
+        if payload.reason != "loadFailed":
+            return
+
+        await asyncio.sleep(0.1)
+        if player.current is not None or player.playing or player.paused:
+            return
+
+        state = await self.get_player_state(player.guild.id)
+        try:
+            resumed = await self.playback_service.handle_track_exception(player, state)
+        except Exception as exc:
+            await log(f"ERROR: Failed to recover after loadFailed track end: {exc}")
+            return
+
+        if resumed:
+            await log("INFO: Continued playback after loadFailed track end.")
+
     @commands.Cog.listener()
     async def on_wavelink_track_exception(self, payload):
         player = payload.player
@@ -319,6 +336,11 @@ class MediaCommands(commands.Cog):
             return
 
         await log(f"WARNING: Track exception: {payload.exception}")
+        if hasattr(player, "_error_count"):
+            try:
+                player._error_count = 0
+            except Exception:
+                pass
 
     @commands.hybrid_command(name="play", help="Play a song from URL or search query")
     async def play(self, ctx, *, query: str):

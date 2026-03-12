@@ -939,14 +939,17 @@ class MediaPlaybackService:
 
     async def handle_track_exception(self, player, state: MediaPlayer | None = None):
         await log("WARNING: Track exception received, attempting to continue queue.")
+        if player.current is not None or player.playing or player.paused:
+            return False
         if not player.queue:
-            return
+            return False
 
         try:
             next_track = player.queue.get()
         except Exception:
-            return
+            return False
 
         resolved_track = await self.resolve_track_for_playback(next_track)
         await self._attach_track_platform_meta(state, next_track, resolved_track)
-        await player.play(resolved_track, volume=self.default_volume)
+        await player.play(resolved_track, replace=True, volume=self.default_volume)
+        return True
